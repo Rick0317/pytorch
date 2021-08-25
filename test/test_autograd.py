@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import gc
 import io
 import math
@@ -43,7 +45,12 @@ from torch.testing._internal.common_device_type import (instantiate_device_type_
                                                         deviceCountAtLeast, skipCUDAIfCudnnVersionLessThan,
                                                         skipCUDAIf, skipMeta)
 
-load_tests = make_load_tests(imported_test_cases=set())
+import autograd.test_complex
+
+load_tests = make_load_tests(
+    imported_test_cases={
+        autograd.test_complex.TestAutogradComplex,
+    })
 
 import pickle
 
