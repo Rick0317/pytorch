@@ -108,6 +108,48 @@ class Linear(Module):
         )
 
 
+class Bias(Module):
+    r"""Adds the bias to the incoming data.
+
+    This module supports :ref:`TensorFloat32<tf32_on_ampere>`.
+
+    Args:
+        num_features: size of each sample
+
+    Shape:
+        - Input: :math:`(*, H_{n})` where :math:`*` means any number of
+          dimensions including none and :math:`H_{n} = \text{num\_features}`.
+        - Output: :math:`(*, H_{n})` where all but the last dimension
+          are the same shape as the input and :math:`H_{n} = \text{num\_features}`.
+
+    Attributes:
+        bias:   the learnable bias of the module of shape :math:`(\text{num\_features})`.
+                The values are initialized from
+                :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})` where
+                :math:`k = \frac{1}{\text{num\_features}}`
+
+    Examples::
+
+        >>> m = nn.Bias(20)
+        >>> input = torch.randn(128, 20)
+        >>> output = m(input)
+        >>> print(output.size())
+        torch.Size([128, 20])
+    """
+    __constants__ = ['num_features']
+    num_features: int
+
+    def __init__(self, num_features: int, device=None, dtype=None) -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.bias = Parameter(torch.empty(num_features, device=device,
+                                          dtype=dtype))
+        init.normal_(self.bias)
+
+    def forward(self, input: Tensor) -> Tensor:
+        return F.bias(input, self.bias)
+
+
 # This class exists solely to avoid triggering an obscure error when scripting
 # an improperly quantized attention layer. See this issue for details:
 # https://github.com/pytorch/pytorch/issues/58969
