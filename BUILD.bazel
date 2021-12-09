@@ -72,6 +72,7 @@ cc_library(
         "@fmt",
         "//c10/util:Array",
         "//c10/util:C++17",
+        "//c10/util:LeftRight",
     ] + if_cuda(
         ["@cuda"],
         [],

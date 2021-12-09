@@ -15,6 +15,13 @@ def define_rules(rules):
         deps = ["//c10/macros:Macros"],
     )
 
+    rules.cc_library(
+        name = "LeftRight",
+        hdrs = ["LeftRight.h"],
+        srcs = ["LeftRight.cpp"],
+        deps = ["//c10/macros:Macros"],
+    )
+
     # Temporary targets to export the headers and sources that are not
     # in libraries but are still needed for the //:c10 target that we
     # are slowly replacing.
@@ -32,6 +39,7 @@ def define_rules(rules):
             exclude=[
                 "Array.cpp",
                 "C++17.cpp",
+                "LeftRight.cpp",
             ],
         ),
         visibility = ["//:__pkg__"],
