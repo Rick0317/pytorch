@@ -73,6 +73,7 @@ cc_library(
         "//c10/util:Array",
         "//c10/util:C++17",
         "//c10/util:LeftRight",
+        "//c10/util:TypeTraits",
     ] + if_cuda(
         ["@cuda"],
         [],

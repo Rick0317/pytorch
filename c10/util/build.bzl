@@ -22,6 +22,13 @@ def define_rules(rules):
         deps = ["//c10/macros:Macros"],
     )
 
+    rules.cc_library(
+        name = "TypeTraits",
+        hdrs = ["TypeTraits.h"],
+        srcs = ["TypeTraits.cpp"],
+        deps = [":C++17"],
+    )
+
     # Temporary targets to export the headers and sources that are not
     # in libraries but are still needed for the //:c10 target that we
     # are slowly replacing.
@@ -40,6 +47,7 @@ def define_rules(rules):
                 "Array.cpp",
                 "C++17.cpp",
                 "LeftRight.cpp",
+                "TypeTraits.cpp",
             ],
         ),
         visibility = ["//:__pkg__"],

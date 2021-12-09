@@ -24,3 +24,12 @@ def define_rules(rules):
             "//c10/util:LeftRight",
         ],
     )
+
+    rules.cc_test(
+        name = "TypeTraits_test",
+        srcs = ["TypeTraits_test.cpp"],
+        deps = [
+            "@com_google_googletest//:gtest_main",
+            "//c10/util:TypeTraits",
+        ],
+    )
