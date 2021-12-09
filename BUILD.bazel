@@ -70,6 +70,7 @@ cc_library(
     deps = [
         ":c10_headers",
         "@fmt",
+        "//c10/util:Array",
         "//c10/util:C++17",
     ] + if_cuda(
         ["@cuda"],
