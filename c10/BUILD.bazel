@@ -56,9 +56,7 @@ cc_library(
 
 cc_library(
     name = "c10",
-    srcs = [
-        "//c10/core:sources",
-    ] + if_cuda(
+    srcs = if_cuda(
         glob([
             "cuda/*.cpp",
             "cuda/impl/*.cpp",
@@ -68,6 +66,7 @@ cc_library(
     copts = ["-DCAFFE2_BUILD_MAIN_LIB"],
     deps = [
         ":headers",
+        "//c10/core:CPUAllocator",
         "//c10/core:base",
         "//c10/core:alloc_cpu",
         "//c10/core:free_cpu",

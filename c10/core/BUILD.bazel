@@ -27,6 +27,21 @@ cc_library(
 )
 
 cc_library(
+    name = "CPUAllocator",
+    hdrs = ["CPUAllocator.h"],
+    srcs = ["CPUAllocator.cpp"],
+    deps = [
+        ":alloc_cpu",
+        ":base",
+        ":free_cpu",
+        "//c10/macros",
+        "//c10/mobile",
+        "//c10/util:base",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "ScalarType",
     hdrs = ["ScalarType.h"],
     deps = ["//c10/util:base"],
@@ -68,13 +83,5 @@ filegroup(
         ], exclude = [
         ],
     ),
-    visibility = ["//c10:__pkg__"],
-)
-
-filegroup(
-    name = "sources",
-    srcs = [
-        "CPUAllocator.cpp",
-    ],
     visibility = ["//c10:__pkg__"],
 )
