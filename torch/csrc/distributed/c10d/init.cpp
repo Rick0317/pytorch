@@ -985,7 +985,7 @@ Arguments:
               [](::c10d::ProcessGroup& pg, at::Tensor& x, int rootRank) {
                 ::c10d::BroadcastOptions opts;
                 opts.rootRank = rootRank;
-                std::vector<at::Tensor> xs = {x};
+                std::vector<at::Tensor> xs{x};
                 return pg.broadcast(xs, opts);
               },
               py::arg("tensor"),

@@ -203,16 +203,13 @@ class TORCH_API ProcessGroup : public torch::CustomClassHolder {
   }
 
   // Subclasses must override this method to return the backend name
-  virtual const std::string getBackendName() const = 0;
+  virtual const std::string getBackendName() const {
+    TORCH_INTERNAL_ASSERT(false, "getBackendName is not implemented.");
+  };
 
-  virtual c10::intrusive_ptr<ProcessGroup::Work> broadcast(
-      std::vector<at::Tensor>& /* tensors */,
-      const BroadcastOptions& /* opts */ = BroadcastOptions()) {
-    TORCH_CHECK(
-        false,
-        c10::str(
-            "ProcessGroup ", getBackendName(), "does not support broadcast"));
-  }
+  c10::intrusive_ptr<ProcessGroup::Work> broadcast(
+      std::vector<at::Tensor>& tensors,
+      const BroadcastOptions& opts = {});
 
   virtual c10::intrusive_ptr<ProcessGroup::Work> allreduce(
       std::vector<at::Tensor>& /* tensors */,
@@ -424,6 +421,17 @@ class TORCH_API ProcessGroup : public torch::CustomClassHolder {
         false,
         c10::str(
             "ProcessGroup ", getBackendName(), "does not support barrier"));
+  }
+
+  // Belows are implementation details of the c10d ops. Please
+  // directly call the above APIs.
+  virtual c10::intrusive_ptr<ProcessGroup::Work> broadcast_impl(
+      std::vector<at::Tensor>& /* tensors */,
+      const BroadcastOptions& /* opts */ = BroadcastOptions()) {
+    TORCH_CHECK(
+        false,
+        c10::str(
+            "ProcessGroup ", getBackendName(), "does not support broadcast"));
   }
 
  protected:
