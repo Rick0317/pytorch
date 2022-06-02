@@ -54,8 +54,8 @@
 #include <ATen/Dispatch.h>
 #include <ATen/InferSize.h>
 #include <ATen/WrapDimUtils.h>
-#include <aten/src/ATen/ExpandUtils.h>
-#include <aten/src/ATen/native/ReduceOpsUtils.h>
+#include <ATen/ExpandUtils.h>
+#include <ATen/native/ReduceOpsUtils.h>
 #include <c10/core/ScalarType.h>
 #include <torch/csrc/api/include/torch/enum.h>
 #include <ostream>
