@@ -40,6 +40,11 @@ TEST(DispatchKeySet, ShowSemantics) {
   ASSERT_TRUE(autograd_cuda.has(DispatchKey::AutogradFunctionality));
   ASSERT_TRUE(autograd_cuda.has_backend(BackendComponent::CUDABit));
 
+  // And same thing with Autocast
+  constexpr auto autocast_xpu = DispatchKeySet(DispatchKey::AutocastXPU);
+  ASSERT_TRUE(autocast_xpu.has(DispatchKey::AutocastFunctionality));
+  ASSERT_TRUE(autocast_xpu.has_backend(BackendComponent::XPUBit));
+
   // Because DispatchKeySet uses a condensed internal representation, you cannot
   // use it to represent the FULL cross product of backends and functionalities
   // for example:
@@ -226,15 +231,19 @@ TEST(DispatchKeySet, DoubletonPerBackend) {
       // Skip these because they aren't real keys.
       if (tid1 == DispatchKey::StartOfDenseBackends ||
           tid1 == DispatchKey::StartOfSparseBackends ||
+          tid1 == DispatchKey::StartOfSparseCsrBackends ||
           tid1 == DispatchKey::StartOfQuantizedBackends ||
           tid1 == DispatchKey::StartOfNestedTensorBackends ||
-          tid1 == DispatchKey::StartOfAutogradBackends)
+          tid1 == DispatchKey::StartOfAutogradBackends ||
+          tid1 == DispatchKey::StartOfAutocastBackends)
         continue;
       if (tid2 == DispatchKey::StartOfDenseBackends ||
           tid2 == DispatchKey::StartOfSparseBackends ||
+          tid2 == DispatchKey::StartOfSparseCsrBackends ||
           tid2 == DispatchKey::StartOfQuantizedBackends ||
           tid2 == DispatchKey::StartOfNestedTensorBackends ||
-          tid2 == DispatchKey::StartOfAutogradBackends)
+          tid2 == DispatchKey::StartOfAutogradBackends ||
+          tid2 == DispatchKey::StartOfAutocastBackends)
         continue;
 
       auto backend1 = toBackendComponent(tid1);

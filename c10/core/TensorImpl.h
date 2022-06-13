@@ -809,7 +809,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
       return device_custom().is_cpu();
     }
     constexpr auto cpu_bits_ks = DispatchKeySet(BackendComponent::CPUBit) |
-        DispatchKeySet({DispatchKey::SparseCsrCPU, DispatchKey::MkldnnCPU});
+        DispatchKeySet(DispatchKey::MkldnnCPU);
     return key_set_.has_any(cpu_bits_ks);
   }
 
@@ -819,8 +819,7 @@ struct C10_API TensorImpl : public c10::intrusive_ptr_target {
     if (C10_UNLIKELY(custom_device_)) {
       return device_custom().is_cuda();
     }
-    constexpr auto cuda_bits_ks = DispatchKeySet(BackendComponent::CUDABit) |
-        DispatchKeySet(DispatchKey::SparseCsrCUDA);
+    constexpr auto cuda_bits_ks = DispatchKeySet(BackendComponent::CUDABit);
     return key_set_.has_any(cuda_bits_ks);
   }
 
