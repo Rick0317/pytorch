@@ -98,11 +98,13 @@ struct MathOpFallback {
           continue;
         }
         auto tensor = std::move(ivalue).toTensor();
-        TORCH_CHECK_NOT_IMPLEMENTED(!tensor.is_meta(), op_name, " fallback does not support meta tensors.");
         auto resolved_tensor = at::clone(tensor);
         if (mut_arg) {
           TORCH_CHECK(mutable_inputs_with_their_clones.empty(), op_name, " fallback does not support operators with more than one mutable tensors with ",
             op_name, "bit set to true.");
+          if (tensor.is_meta()) {
+            continue;
+          }
           mutable_inputs_with_their_clones.emplace_back(std::make_pair(std::move(tensor), resolved_tensor));
         }
         (*stack)[stack_start + i] = std::move(resolved_tensor);
