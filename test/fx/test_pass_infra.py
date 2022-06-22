@@ -8,6 +8,7 @@ from torch.fx.passes.infra.pass_manager import (
     PassManager,
     this_before_that_pass_constraint,
 )
+from torch.fx.passes.infra.pass_pipeline_manager import PassPipelineManager
 
 def replace_add_with_mul_pass(gm):
     for node in gm.graph.nodes:
@@ -87,3 +88,23 @@ class TestPassManager(TestCase):
 
         pm = PassManager()
         self.assertRaises(TypeError, pm.add_checks, check_bad_args)
+
+
+class TestPassPipelineManager(TestCase):
+    def test_pass_pipeline_manager(self):
+        """
+        Tests that the pass pipeline manager runs the pass managers correctly.
+        """
+        m = AddModule()
+        traced_m = torch.fx.symbolic_trace(m)
+
+        pm1 = PassManager(passes=[replace_add_with_mul_pass])
+        pm2 = PassManager(passes=[replace_mul_with_sub_pass])
+
+        ppm = PassPipelineManager(pass_managers=[pm1, pm2])
+        ppm(traced_m)
+
+        # Check that all call_function nodes are divs
+        for node in traced_m.graph.nodes:
+            if node.op == "call_function":
+                self.assertEqual(node.target, torch.div)
