@@ -69,8 +69,36 @@ void _spdiags_kernel_cuda(
             });
       });
 }
+
+void _spdiags_backward_kernel_cuda(TensorIterator& iter, Tensor& grad_in) {
+  AT_DISPATCH_FLOATING_AND_COMPLEX_TYPES_AND3(
+      at::ScalarType::BFloat16,
+      at::ScalarType::Half,
+      at::ScalarType::ComplexHalf,
+      iter.dtype(),
+      "spdiags_backward_cpu",
+      [&] {
+        auto* grad_in_ptr = grad_in.data_ptr<scalar_t>();
+        int64_t const grad_in_row_stride = grad_in.stride(0);
+        int64_t const grad_in_col_stride = grad_in.stride(1);
+        gpu_kernel(
+            iter,
+            [grad_in_ptr, grad_in_row_stride, grad_in_col_stride] GPU_LAMBDA(
+                scalar_t grad_out_value,
+                int64_t row_idx,
+                int64_t col_idx) -> scalar_t {
+              scalar_t* grad_in_val_ptr = grad_in_ptr +
+                  (row_idx * grad_in_row_stride) +
+                  (col_idx * grad_in_col_stride);
+              *grad_in_val_ptr = grad_out_value;
+              return scalar_t{0};
+            });
+      });
+}
 } // namespace
 REGISTER_DISPATCH(spdiags_kernel_stub, &_spdiags_kernel_cuda)
+
+REGISTER_DISPATCH(spdiags_backward_kernel_stub, &_spdiags_backward_kernel_cuda)
 
 } // namespace native
 } // namespace at
