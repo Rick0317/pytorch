@@ -1,4 +1,6 @@
 #include <ATen/Dispatch.h>
+#include <ATen/SparseTensorImpl.h>
+#include <ATen/SparseTensorUtils.h>
 #include <ATen/native/sparse/SparseFactories.h>
 
 #ifndef AT_PER_OPERATOR_HEADERS
@@ -10,12 +12,14 @@
 #include <ATen/ops/empty.h>
 #include <ATen/ops/sparse_coo_tensor.h>
 #include <ATen/ops/where.h>
+#include <ATen/ops/zeros.h>
 #endif
 
 namespace at {
 namespace native {
 
 DEFINE_DISPATCH(spdiags_kernel_stub);
+DEFINE_DISPATCH(spdiags_backward_kernel_stub);
 
 Tensor spdiags(
     const Tensor& diagonals,
@@ -89,6 +93,50 @@ Tensor spdiags(
     }
   }
   return result_coo;
+}
+
+Tensor spdiags_backward(
+    const Tensor& grad_out,
+    const Tensor& offsets,
+    IntArrayRef input_shape) {
+  auto offsets_1d = offsets.dim() == 0 ? offsets.unsqueeze(0) : offsets;
+
+  auto n_diag = input_shape.size() == 2 ? input_shape[0] : 1;
+  auto n_col_in = input_shape.size() == 2 ? input_shape[1] : input_shape[0];
+  AT_ASSERT(grad_out.dim() == 2);
+  AT_ASSERT(offsets_1d.size(0) == n_diag);
+  auto grad_in_options = grad_out.options().layout(Layout::Strided);
+  // zeros since we are only going to se the non-zero elements
+  Tensor grad_in = at::zeros({n_diag, n_col_in}, grad_in_options);
+  auto grad_out_coo = grad_out.layout() == Layout::Sparse
+      ? grad_out.coalesce()
+      : grad_out.to_sparse();
+
+  auto grad_out_values = sparse::get_sparse_impl(grad_out_coo)->values_;
+  auto grad_out_indices = sparse::get_sparse_impl(grad_out_coo)->indices_;
+  auto grad_out_row_indices = grad_out_indices[0];
+  auto grad_out_col_indices = grad_out_indices[1];
+
+  // Precompute input row indices for each nnz
+  auto row_in_indices =
+      offsets_1d
+          .eq(grad_out_col_indices.sub(grad_out_row_indices).reshape({-1, 1}))
+          .nonzero()
+          .permute({1, 0})[-1];
+
+  // dummy output required by cpu/gpu_kernel
+  auto dummy = at::empty({1}, grad_in.options());
+  auto iter = TensorIteratorConfig()
+                  .check_all_same_dtype(false)
+                  .add_output(dummy)
+                  .add_input(grad_out_values)
+                  .add_input(row_in_indices)
+                  .add_input(grad_out_col_indices)
+                  .build();
+
+  spdiags_backward_kernel_stub(iter.device_type(), iter, grad_in);
+
+  return grad_in.reshape(input_shape);
 }
 
 } // namespace native
