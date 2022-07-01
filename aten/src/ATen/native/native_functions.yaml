@@ -5284,7 +5284,7 @@
 - func: _spdiags(Tensor diagonals, Tensor offsets, int[] shape, Layout? layout=None) -> Tensor
   python_module: sparse
   dispatch:
-    CPU: spdiags
+    CompositeExplicitAutograd: spdiags
 
 - func: _spdiags_backward(Tensor grad_output, Tensor offsets, int[] input_shape) -> Tensor
   dispatch:
