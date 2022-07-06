@@ -31,7 +31,7 @@ from torch._prims.wrappers import (
 
 from collections.abc import Iterable
 from functools import reduce, partial, wraps
-from typing import Sequence, Optional, Union, Callable, List, Tuple
+from typing import Sequence, Optional, Union, Callable, List, Tuple, Dict
 import operator
 import warnings
 import math
@@ -310,7 +310,22 @@ def _maybe_broadcast(*args, preserve_cpu_scalar_tensors=True):
 
 
 # Utilities should come BEFORE this import
-from torch._decomp import register_decomposition
+from torch._decomp import register_decomposition, decomposition_table
+
+ref_decomposition_table: Dict[torch._ops.OpOverload, Callable] = {}
+
+
+def register_ref_decomposition(aten_op, **kwargs):
+    def decomposition_decorator(f):
+        global ref_decomposition_table
+        register_decomposition(
+            aten_op, [decomposition_table, ref_decomposition_table], **kwargs
+        )(f)
+
+        return f
+
+    return decomposition_decorator
+
 
 #
 # Elementwise unary references
@@ -350,7 +365,7 @@ def _make_elementwise_unary_reference(
         if aten_op is infer_aten_op:
             aten_op = getattr(torch.ops.aten, prim.__name__)
         if aten_op is not None:
-            register_decomposition(aten_op, disable_meta=disable_meta)(_ref)
+            register_ref_decomposition(aten_op, disable_meta=disable_meta)(_ref)
 
         return _ref
 
@@ -577,7 +592,7 @@ def logsumexp(
     return result
 
 
-@register_decomposition(torch.ops.aten.nan_to_num)
+@register_ref_decomposition(torch.ops.aten.nan_to_num)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("a,"),
@@ -750,13 +765,13 @@ def _make_elementwise_binary_reference(
     if aten_op is infer_aten_op:
         aten_op = getattr(torch.ops.aten, prim.__name__.split(".")[0])
     if aten_op is not None:
-        register_decomposition(aten_op, disable_meta=disable_meta)(_ref)
+        register_ref_decomposition(aten_op, disable_meta=disable_meta)(_ref)
 
     return _ref
 
 
 # Add has its own implementation because it has an alpha argument
-@register_decomposition(torch.ops.aten.add)
+@register_ref_decomposition(torch.ops.aten.add)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("a", "b"),
@@ -860,7 +875,7 @@ copysign = _make_elementwise_binary_reference(
 # complex =  _make_elementwise_binary_reference(prims.complex, type_promotion_kind=ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
 
 
-@register_decomposition(torch.ops.aten.div)
+@register_ref_decomposition(torch.ops.aten.div)
 @out_wrapper()
 def div(
     a: Union[TensorLikeType, NumberType],
@@ -1258,7 +1273,7 @@ remainder = _make_elementwise_binary_reference(
 # TODO: add docstring
 # TODO: consider refactoring this with add impl
 # sub has its own implementation because it has an alpha argument
-@register_decomposition(torch.ops.aten.sub)
+@register_ref_decomposition(torch.ops.aten.sub)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("a", "b"),
@@ -1322,7 +1337,7 @@ trunc_divide = _make_elementwise_binary_reference(
 #
 
 
-@register_decomposition(torch.ops.aten.clamp)
+@register_ref_decomposition(torch.ops.aten.clamp)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("a", "min", "max"),
@@ -1386,7 +1401,7 @@ def clamp_max(
 
 # https://pytorch.org/docs/stable/generated/torch.where.html
 # TODO: implement alternate where
-@register_decomposition(torch.ops.aten.where)
+@register_ref_decomposition(torch.ops.aten.where)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("a", "b"),
@@ -1430,7 +1445,7 @@ def copy_to(a: Tensor, b: Tensor, *, allow_cross_device=True):
     return prims.copy_to(a, b)
 
 
-@register_decomposition(torch.ops.aten.item)
+@register_ref_decomposition(torch.ops.aten.item)
 def item(a: TensorLikeType) -> NumberType:
     if a.numel() != 1:
         msg = f"Can't convert a tensor with {a.numel()} elements to a number!"
@@ -1516,7 +1531,7 @@ def _reduction(
 py_all = all
 
 
-@register_decomposition(torch.ops.aten.all)
+@register_ref_decomposition(torch.ops.aten.all)
 @out_wrapper()
 def all(
     a: TensorLikeType,
@@ -1539,7 +1554,7 @@ def all(
     return result
 
 
-@register_decomposition(torch.ops.aten.any)
+@register_ref_decomposition(torch.ops.aten.any)
 @out_wrapper()
 def any(
     a: TensorLikeType,
@@ -1556,7 +1571,7 @@ def any(
     return result
 
 
-@register_decomposition(torch.ops.aten.sum)
+@register_ref_decomposition(torch.ops.aten.sum)
 def sum(
     a: TensorLikeType,
     dim: Union[Optional[int], Optional[List[int]]] = None,
@@ -1584,7 +1599,7 @@ def sum(
     )
 
 
-@register_decomposition(torch.ops.aten.prod)
+@register_ref_decomposition(torch.ops.aten.prod)
 def prod(
     a: TensorLikeType,
     dim: Union[Optional[int], Optional[List[int]]] = None,
@@ -1612,7 +1627,7 @@ def prod(
     )
 
 
-@register_decomposition(torch.ops.aten.amin)
+@register_ref_decomposition(torch.ops.aten.amin)
 def amin(
     a: TensorLikeType,
     dim: Union[Optional[int], Optional[List[int]]] = None,
@@ -1636,7 +1651,7 @@ def amin(
     )
 
 
-@register_decomposition(torch.ops.aten.amax)
+@register_ref_decomposition(torch.ops.aten.amax)
 def amax(
     a: TensorLikeType,
     dim: Optional[DimsType] = None,
@@ -1736,7 +1751,7 @@ def std(
     return _maybe_convert_to_dtype(result, dtype)  # type: ignore[return-value,arg-type]
 
 
-@register_decomposition(torch.ops.aten.mean)
+@register_ref_decomposition(torch.ops.aten.mean)
 def mean(
     a: TensorLikeType,
     dim: Optional[DimsType] = None,
@@ -1778,7 +1793,7 @@ def mean(
     return result
 
 
-@register_decomposition(torch.ops.aten.std_mean.correction)
+@register_ref_decomposition(torch.ops.aten.std_mean.correction)
 def std_mean(
     a: TensorLikeType,
     dim: Union[Optional[int], Optional[List[int]]] = None,
@@ -1792,7 +1807,7 @@ def std_mean(
     return s, m
 
 
-@register_decomposition(torch.ops.aten.var_mean)
+@register_ref_decomposition(torch.ops.aten.var_mean)
 def var_mean(
     a: TensorLikeType,
     dim: Optional[DimsType] = None,
@@ -1806,7 +1821,7 @@ def var_mean(
     return v, m
 
 
-@register_decomposition(torch.ops.aten.addr)
+@register_ref_decomposition(torch.ops.aten.addr)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("self", "vec1", "vec2"),
@@ -1936,7 +1951,7 @@ def broadcast_to(a: TensorLikeType, size: ShapeType) -> TensorLikeType:
     return prims.broadcast_in_dim(a, size, dims)
 
 
-@register_decomposition(torch.ops.aten.cat)
+@register_ref_decomposition(torch.ops.aten.cat)
 @out_wrapper()
 @elementwise_type_promotion_wrapper(
     type_promoting_args=("tensors",),
@@ -2033,7 +2048,7 @@ def flatten(a: TensorLikeType, start_dim: int = 0, end_dim: int = -1) -> TensorL
     return prims.collapse(a, start_dim, end_dim + 1)
 
 
-@register_decomposition(torch.ops.aten.flip)
+@register_ref_decomposition(torch.ops.aten.flip)
 def flip(a: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
     if not isinstance(dims, tuple) and not isinstance(dims, list):
         raise ValueError("dims has to be a sequence of ints")
@@ -2090,7 +2105,7 @@ def _normalize(
     return out, mean, rstd
 
 
-@register_decomposition(torch.ops.aten.native_layer_norm)
+@register_ref_decomposition(torch.ops.aten.native_layer_norm)
 def native_layer_norm(
     input: Tensor,
     normalized_shape: ShapeType,
@@ -2152,7 +2167,7 @@ def native_layer_norm(
 
 # TODO: Adding this as a meta function causes functorch tests to fail when compiled with debug mode.
 # test/test_eager_transforms.py::TestFunctionalizeCPU::test_functionalize_fx_transpose_simple_cpu
-@register_decomposition(torch.ops.aten.permute, disable_meta=True)
+@register_ref_decomposition(torch.ops.aten.permute, disable_meta=True)
 def permute(a: TensorLikeType, dims: DimsSequenceType) -> TensorLikeType:
     _permutation = utils.canonicalize_dims(a.ndim, dims)
     return prims.transpose(a, _permutation)
@@ -2304,7 +2319,7 @@ def reshape(a: TensorLikeType, shape: ShapeType) -> TensorLikeType:
     return _reshape_view_helper(a, shape, allow_copy=True)
 
 
-@register_decomposition(torch.ops.aten.roll)
+@register_ref_decomposition(torch.ops.aten.roll)
 def roll(
     a: TensorLikeType, shifts: DimsType, dims: DimsType = tuple()
 ) -> TensorLikeType:
@@ -2350,7 +2365,7 @@ def roll(
     return torch.cat((t0, t1), dim)
 
 
-@register_decomposition(torch.ops.aten.rot90)
+@register_ref_decomposition(torch.ops.aten.rot90)
 def rot90(
     a: TensorLikeType, k: int = 1, dims: DimsSequenceType = (0, 1)
 ) -> TensorLikeType:
@@ -2389,7 +2404,7 @@ def _check_stack_inputs(tensors: TensorSequenceType) -> None:
         )
 
 
-@register_decomposition(torch.ops.aten.stack)
+@register_ref_decomposition(torch.ops.aten.stack)
 @out_wrapper()
 def stack(tensors: TensorSequenceType, dim: int = 0) -> TensorLikeType:
     assert len(tensors) > 0, "stack expects a non-empty TensorList"
@@ -2443,7 +2458,7 @@ def vstack(tensors: TensorSequenceType) -> TensorLikeType:
 
 
 # Note: although squeeze is documented as having the out= kwarg it doesn't
-@register_decomposition(torch.ops.aten.squeeze)
+@register_ref_decomposition(torch.ops.aten.squeeze)
 def squeeze(a: TensorLikeType, dim: Optional[int] = None) -> TensorLikeType:
     if dim is not None:
         dim = utils.canonicalize_dim(a.ndim, dim)
@@ -2637,7 +2652,7 @@ def dsplit(a: TensorLikeType, sections: DimsType) -> TensorSequenceType:
     return tensor_split(a, sections, 2)
 
 
-@register_decomposition(torch.ops.aten.t.default)
+@register_ref_decomposition(torch.ops.aten.t.default)
 def t(a: TensorLikeType):
     # TODO: Add sparse support
     # if a.is_sparse:
@@ -2671,7 +2686,7 @@ def transpose(a: TensorLikeType, dim0: int, dim1: int) -> TensorLikeType:
 swap_axes = transpose
 
 
-@register_decomposition(torch.ops.aten.unsqueeze)
+@register_ref_decomposition(torch.ops.aten.unsqueeze)
 def unsqueeze(a: TensorLikeType, dim: int) -> TensorLikeType:
     # Note that unsqueeze canonicalizes with rank + 1 because it allows
     # a new innermost dimension to be specified
@@ -2680,7 +2695,7 @@ def unsqueeze(a: TensorLikeType, dim: int) -> TensorLikeType:
 
 
 # TODO: Turn this into a decomposition (currently fails on reshape meta tests)
-@register_decomposition(torch.ops.aten.view)
+@register_ref_decomposition(torch.ops.aten.view)
 def view(a: TensorLikeType, shape: ShapeType) -> TensorLikeType:
     return _reshape_view_helper(a, shape, allow_copy=False)
 
@@ -2728,7 +2743,7 @@ def empty_like(
 
 
 # NOTE: for convenience, shape can be a tuple of ints or a tuple containing a tuple of ints
-@register_decomposition(torch.ops.aten.empty_strided)
+@register_ref_decomposition(torch.ops.aten.empty_strided)
 def empty_strided(
     shape: Union[ShapeType, Tuple[ShapeType]],
     strides: StrideType,
@@ -2795,7 +2810,7 @@ zeros = partial(full, fill_value=False)
 zeros_like = partial(full_like, fill_value=False)
 
 
-@register_decomposition(torch.ops.aten.uniform)
+@register_ref_decomposition(torch.ops.aten.uniform)
 def uniform(
     shape: ShapeType,
     low: Union[bool, int, float] = 0.0,
@@ -2870,7 +2885,7 @@ def equal(a: TensorLikeType, b: TensorLikeType) -> bool:
     return item(all(eq(a, b)))  # type: ignore[return-value]
 
 
-@register_decomposition(torch.ops.aten.trace)
+@register_ref_decomposition(torch.ops.aten.trace)
 def trace(self: TensorLikeType) -> TensorLikeType:
     utils.check(
         self.ndim == 2, lambda: "expected a matrix, but got tensor with dim {self.ndim}"
