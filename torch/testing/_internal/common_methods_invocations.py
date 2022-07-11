@@ -20882,6 +20882,10 @@ python_ref_db = [
         ),
     ),
     PythonRefInfo(
+        "_refs.addcmul",
+        torch_opinfo_name="addcmul",
+    ),
+    PythonRefInfo(
         "_refs.clamp",
         torch_opinfo_name="clamp",
         supports_nvfuser=False,
