@@ -72,9 +72,6 @@ def define_targets(rules):
         tools = ["//torchgen:gen"],
         outs = ["aten/src/ATen/" + out for out in gen_aten_outs],
         cmd = gen_aten_cmd,
-        # This currently clashes with the existing Bazel generated
-        # files.
-        tags = ["-bazel"],
     )
 
     rules.genrule(
