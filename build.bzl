@@ -48,7 +48,7 @@ def define_targets(rules):
 
     gen_aten_cmd = " ".join([
         "$(execpath //torchgen:gen)",
-        "--install_dir=$(RULEDIR)",
+        "--install_dir=$(RULEDIR)/aten/src/ATen/",
         "--source-path aten/src/ATen",
     ] + (["--static_dispatch_backend CPU"] if rules.is_cpu_static_dispatch_build() else []))
 
@@ -70,15 +70,18 @@ def define_targets(rules):
         name = "gen_aten",
         srcs = gen_aten_srcs,
         tools = ["//torchgen:gen"],
-        outs = gen_aten_outs,
+        outs = ["aten/src/ATen/" + out for out in gen_aten_outs],
         cmd = gen_aten_cmd,
+        # This currently clashes with the existing Bazel generated
+        # files.
+        tags = ["-bazel"],
     )
 
     rules.genrule(
         name = "gen_aten_hip",
         srcs = gen_aten_srcs,
         tools = ["//torchgen:gen"],
-        outs = gen_aten_outs_cuda,
+        outs = ["aten/src/ATen/" + out for out in gen_aten_outs_cuda],
         cmd = gen_aten_cmd + " --rocm",
         features = ["-create_bazel_outputs"],
         tags = ["-bazel"],
