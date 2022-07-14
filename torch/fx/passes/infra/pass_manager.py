@@ -2,9 +2,12 @@ import inspect
 from queue import Queue
 from functools import wraps
 from typing import Callable, Dict, List
+import warnings
 
+import torch
 import torch.nn as nn
 from torch.fx.graph_module import GraphModule
+from torch.fx.node import Argument, map_aggregate
 from torch.fx._compatibility import compatibility
 from torch.fx.passes.infra.pass_base import PassResult
 
@@ -250,7 +253,7 @@ class PassManager:
     def check(self, module: nn.Module) -> None:
         pass
 
-    def __call__(self, module: nn.Module) -> PassResult:
+    def __call__(self, module: nn.Module, **kwargs) -> PassResult:
         """
         Runs a list of passes in the order based on `self.passes` on the given
         graph module. Each time a pass is run, checks and linting will be run on
@@ -258,6 +261,10 @@ class PassManager:
 
         If the module is a graph module, we will run the list of passes until
         the graph stops changing, or until `steps` number of times.
+
+        If **kwargs is passed in and `run_checks_after_each_pass` is set, we
+        will check between each pass that the result of the graph module is
+        still the same between passes.
         """
         # Order the passes based on the constraints
         if not self._validated:
@@ -274,6 +281,9 @@ class PassManager:
 
             # Run the set of passes on the graph module
             for fn in self.passes:
+                if self.run_checks_after_each_pass and "input" in kwargs:
+                    orig_res = module(*kwargs["input"])
+
                 res = fn(module)
 
                 module = res.graph_module
@@ -286,9 +296,62 @@ class PassManager:
                 if self.run_checks_after_each_pass:
                     self.check(module)
 
+                    if "input" in kwargs and modified:
+                        new_res = module(*kwargs["input"])
+                        self.check_res_equal(fn, orig_res, new_res, **kwargs)
+
             # If the graph no longer changes, then we can stop running these passes
             overall_modified = overall_modified or modified
             if not modified:
                 break
 
         return PassResult(module, overall_modified)
+
+    def check_res_equal(self, pass_: Callable, res0: Argument, res1: Argument, **kwargs) -> None:
+        """
+        Validates that inference results before and after the pass are `all_close`
+
+        Args:
+            pass_: Pass that was used
+            res0: Inference result before pass was run on the module
+            res1: Inference result after pass was run on the module
+            kwargs: Other kwargs that might be needed (ex. rtol, atol)
+        """
+        def _collect_tensors(arg: Argument) -> List[torch.Tensor]:
+            """Collects all the tensors found in a nested container object"""
+            res: List[torch.Tensor] = []
+
+            def collect(x: Argument) -> Argument:
+                if isinstance(x, torch.Tensor):
+                    res.append(x)
+                return x
+
+            map_aggregate(arg, collect)
+            return res
+
+        tensor_res_0 = _collect_tensors(res0)
+        tensor_res_1 = _collect_tensors(res1)
+
+        for kk, (x, y) in enumerate(zip(tensor_res_0, tensor_res_1)):
+            all_close_kwargs = {"equal_nan": True}
+            if "rtol" in kwargs:
+                all_close_kwargs["rtol"] = kwargs["rtol"]
+            if "atol" in kwargs:
+                all_close_kwargs["atol"] = kwargs["atol"]
+
+            # If tensors are on different devices, make sure to compare
+            # their copies that are on the same device.
+            if x.get_device() != y.get_device():
+                x = x.cpu()
+                y = y.cpu()
+
+            accuracy_check = torch.allclose(x, y, **all_close_kwargs)
+            if not accuracy_check:
+                if self.suppress_check_failures:
+                    warnings.warn(
+                        f"Pass {pass_} failed correctness check due to output {kk}."
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Pass {pass_} failed correctness check due to output {kk}"
+                    )

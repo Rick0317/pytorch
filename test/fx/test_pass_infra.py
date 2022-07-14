@@ -156,3 +156,14 @@ class TestPassManager(TestCase):
             _topological_sort_passes(passes, constraints)
         expected_error_msg = f"Circular dependency detected within the following passes: {passes}"
         self.assertEqual(e.exception.args[0], expected_error_msg)
+
+    def test_validation_inputs(self):
+        """
+        Tests that the validation function runs correctly.
+        """
+        m = AddModule()
+        traced_m = torch.fx.symbolic_trace(m)
+        pm = PassManager(passes=[replace_add_with_mul_pass, replace_mul_with_div_pass], run_checks_after_each_pass=True)
+
+        with self.assertRaises(RuntimeError):
+            pm(traced_m, **{"input": torch.ones(1, 3), "rtol": 1e-05})
