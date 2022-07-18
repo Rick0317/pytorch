@@ -32,7 +32,7 @@ class TORCH_API BackendImplInterface {
    * Configuration
    * */
 
-  virtual void SetRngSeed(size_t seed) const = 0;
+  virtual void SetRngSeed(size_t seed) = 0;
 
   /**
    * IR Tracing
@@ -144,11 +144,11 @@ class TORCH_API BackendImplInterface {
 
 class TORCH_API BackendRegistrar {
  public:
-  BackendRegistrar(const BackendImplInterface* backend_impl_interface);
+  BackendRegistrar(BackendImplInterface* backend_impl_interface);
 };
 
 TORCH_API bool hasBackend();
-TORCH_API const BackendImplInterface* getBackend();
+TORCH_API BackendImplInterface* getBackend();
 
 TORCH_API const IrBuilder* getIrBuilder();
 
