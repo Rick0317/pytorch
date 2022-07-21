@@ -1713,10 +1713,14 @@ void initJITBindings(PyObject* module) {
             // For normalization purposes there is an inconsistency within
             // torch.fx that turns all arguments named "self" into "input". Thus
             // this check ensures that those arguments are checked correctly.
-            if (name == "input" && !self.hasInputArgumentNamed("input")) {
-              self.addArgumentValue("self", toTypeInferredIValue(value));
-            } else {
-              self.addArgumentValue(name, toTypeInferredIValue(value));
+            try {
+              if (name == "input" && !self.hasInputArgumentNamed("input")) {
+                self.addArgumentValue("self", toTypeInferredIValue(value));
+              } else {
+                self.addArgumentValue(name, toTypeInferredIValue(value));
+              }
+            } catch (const c10::Error& e) {
+              return;
             }
           })
       .def("add_argument_values", [](SchemaInfo& self, const py::dict& values) {
@@ -1726,19 +1730,23 @@ void initJITBindings(PyObject* module) {
           if (isEmptyContainer(key_pair.second)) {
             continue;
           }
-          IValue value = toTypeInferredIValue(key_pair.second);
-          TORCH_INTERNAL_ASSERT(
-              key.isString(),
-              "Add argument value keys types should be strings.");
-          // For normalization purposes there is an inconsistency within
-          // torch.fx that
-          // turns all arguments named "self" into "input". Thus this check
-          // ensures that those arguments are checked correctly.
-          if (key.toStringRef() == "input" &&
-              !self.hasInputArgumentNamed("input")) {
-            self.addArgumentValue("self", value);
-          } else {
-            value_map[key.toStringRef()] = value;
+          try {
+            IValue value = toTypeInferredIValue(key_pair.second);
+            TORCH_INTERNAL_ASSERT(
+                key.isString(),
+                "Add argument value keys types should be strings.");
+            // For normalization purposes there is an inconsistency within
+            // torch.fx that
+            // turns all arguments named "self" into "input". Thus this check
+            // ensures that those arguments are checked correctly.
+            if (key.toStringRef() == "input" &&
+                !self.hasInputArgumentNamed("input")) {
+              self.addArgumentValue("self", value);
+            } else {
+              value_map[key.toStringRef()] = value;
+            }
+          } catch (const c10::Error& e) {
+            continue;
           }
         }
         self.addArgumentValues(value_map);
@@ -1913,13 +1921,21 @@ void initJITBindings(PyObject* module) {
     if (isEmptyContainer(self) || isEmptyContainer(other)) {
       return false;
     }
-    return toTypeInferredIValue(self).isAliasOf(toTypeInferredIValue(other));
+    try {
+      return toTypeInferredIValue(self).isAliasOf(toTypeInferredIValue(other));
+    } catch (const c10::Error& e) {
+      return false;
+    }
   });
   m.def("_overlaps", [](const py::object& self, const py::object& other) {
     if (isEmptyContainer(self) || isEmptyContainer(other)) {
       return true;
     }
-    return toTypeInferredIValue(self).overlaps(toTypeInferredIValue(other));
+    try {
+      return toTypeInferredIValue(self).overlaps(toTypeInferredIValue(other));
+    } catch (const c10::Error& e) {
+      return false;
+    }
   });
   m.def("fork", [](const py::args& args, const py::kwargs& kwargs) {
     AT_ASSERT(args.size() >= 1);
