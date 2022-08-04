@@ -346,6 +346,16 @@ class MaskedTensor(torch.Tensor):
 
         func = func.overloadpacket
 
+        from .passthrough import apply_pass_through_fn, is_pass_through_fn
+
+        if is_pass_through_fn(func):
+            return apply_pass_through_fn(func, *args, **kwargs)
+
+        from .unary import apply_native_unary, is_native_unary
+
+        if is_native_unary(func):
+            return apply_native_unary(func, *args, **kwargs)
+
         assert len(args) > 0
         if func in [torch.ops.aten.mm, torch.ops.aten.bmm]:
             len(args) == 2
