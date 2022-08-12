@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import json
+import time
 from typing import Dict, Optional, List, cast, Any
 
 import torch
@@ -25,6 +26,7 @@ from torch.testing._internal.common_utils import (
     shell,
     set_cwd,
     parser as common_parser,
+    wait_for_process,
 )
 import torch.distributed as dist
 
@@ -45,6 +47,16 @@ except ImportError:
     print(
         "Unable to import test_selections from tools/testing. Running without test selection stats..."
     )
+
+
+def is_special_file(file: str) -> bool:
+    build_environment = os.getenv("BUILD_ENVIRONMENT", "linux cuda")
+    if "linux" in build_environment and "cuda" in build_environment:
+        return True
+    else:
+        return file in ['test_nn', 'test_fake_tensor', 'test_cpp_api_parity', 'test_jit_cuda_fuser', 'test_reductions',
+                        'test_cuda', 'test_indexing', 'test_fx_backends', 'test_linalg', 'test_cpp_extensions_jit',
+                        'test_torch', 'test_tensor_creation_ops', 'test_sparse_csr']
 
 
 def discover_tests(
@@ -328,6 +340,7 @@ def discover_functorch_tests():
     assert len(result) >= 8
     return result
 
+
 FUNCTORCH_TESTS = discover_functorch_tests()
 
 TESTS_REQUIRING_LAPACK = [
@@ -370,7 +383,7 @@ def get_executable_command(options, allow_pytest, disable_coverage=False):
 
 
 def run_test(
-    test_module, test_directory, options, launcher_cmd=None, extra_unittest_args=None
+    test_module, test_directory, options, launcher_cmd=None, extra_unittest_args=None, wait=True
 ):
     unittest_args = options.additional_unittest_args.copy()
     if options.verbose:
@@ -401,7 +414,12 @@ def run_test(
 
     command = (launcher_cmd or []) + executable + argv
     print_to_stderr("Executing {} ... [{}]".format(command, datetime.now()))
-    return shell(command, test_directory)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
+    if wait:
+        return wait_for_process(p)
+    return p
 
 
 def test_cuda_primary_ctx(test_module, test_directory, options):
@@ -889,11 +907,12 @@ def get_selected_tests(options):
             print(
                 "::warning:: Gathered no stats from artifacts. Proceeding with default sharding plan."
             )
-            selected_tests = selected_tests[which_shard - 1 :: num_shards]
+            selected_tests = selected_tests[which_shard - 1:: num_shards]
         else:
             print("Found test time stats from artifacts")
             test_file_times_config = test_file_times[test_config]
-            shards = calculate_shards(num_shards, selected_tests, test_file_times_config)
+            shards = calculate_shards(num_shards, selected_tests, test_file_times_config,
+                                      is_special_file=is_special_file)
             _, tests_from_shard = shards[which_shard - 1]
             selected_tests = tests_from_shard
 
@@ -954,12 +973,78 @@ def main():
 
     has_failed = False
     failure_messages = []
+
+    def can_parallel(x: str) -> bool:
+        if x in CUSTOM_HANDLERS or is_special_file(x):
+            return False
+        if "distributed" in x:
+            return False
+        return True
+    selected_tests1 = [x for x in selected_tests if can_parallel(x)]
+    selected_tests2 = [x for x in selected_tests if x not in selected_tests1]
+    if "distributed" in os.environ.get("TEST_CONFIG", ""):
+        selected_tests1 = []
+        selected_tests2 = []
+    procs = []
     try:
-        for test in selected_tests:
+        os.environ['PARALLEL_TESTING'] = '1'
+        for test in selected_tests1:
+            while len(procs) >= 3:
+                tmp = []
+                for t, p in procs:
+                    return_code = p.poll()
+                    if return_code is None:
+                        tmp.append((t, p))
+                        continue
+                    assert isinstance(return_code, int) and not isinstance(
+                        return_code, bool
+                    ), "Return code should be an integer"
+                    if return_code == 0:
+                        continue
+
+                    message = f"{t} failed!"
+                    if return_code < 0:
+                        # subprocess.Popen returns the child process' exit signal as
+                        # return code -N, where N is the signal number.
+                        signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
+                        message += f" Received signal: {signal_name}"
+
+                    err_message = message
+                    if err_message is None:
+                        continue
+                    has_failed = True
+                    failure_messages.append(err_message)
+                    if not options_clone.continue_through_error:
+                        raise RuntimeError(err_message)
+                    print_to_stderr(err_message)
+                procs = tmp
+                time.sleep(0.5)
+
             options_clone = copy.deepcopy(options)
             if test in USE_PYTEST_LIST:
                 options_clone.pytest = True
-            err_message = run_test_module(test, test_directory, options_clone)
+            test_module = parse_test_module(test)
+
+            print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
+            p = run_test(test_module, test_directory, options, wait=False)
+            procs.append((test, p))
+
+        for t, p in procs:
+            return_code = wait_for_process(p)
+            assert isinstance(return_code, int) and not isinstance(
+                return_code, bool
+            ), "Return code should be an integer"
+            if return_code == 0:
+                continue
+
+            message = f"{t} failed!"
+            if return_code < 0:
+                # subprocess.Popen returns the child process' exit signal as
+                # return code -N, where N is the signal number.
+                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
+                message += f" Received signal: {signal_name}"
+
+            err_message = message
             if err_message is None:
                 continue
             has_failed = True
@@ -967,7 +1052,65 @@ def main():
             if not options_clone.continue_through_error:
                 raise RuntimeError(err_message)
             print_to_stderr(err_message)
+        del os.environ['PARALLEL_TESTING']
+        for test in selected_tests2:
+            options_clone = copy.deepcopy(options)
+            if test in USE_PYTEST_LIST:
+                options_clone.pytest = True
+            test_module = parse_test_module(test)
+
+            print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
+            handler = CUSTOM_HANDLERS.get(test_module)
+            if handler is None:
+                return_code = run_test(test_module, test_directory, options, wait=True)
+            else:
+                return_code = handler(test_module, test_directory, options)
+            assert isinstance(return_code, int) and not isinstance(
+                return_code, bool
+            ), "Return code should be an integer"
+            if return_code == 0:
+                continue
+
+            message = f"{test} failed!"
+            if return_code < 0:
+                # subprocess.Popen returns the child process' exit signal as
+                # return code -N, where N is the signal number.
+                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
+                message += f" Received signal: {signal_name}"
+
+            err_message = message
+            if err_message is None:
+                continue
+            has_failed = True
+            failure_messages.append(err_message)
+            if not options_clone.continue_through_error:
+                raise RuntimeError(err_message)
+            print_to_stderr(err_message)
+
     finally:
+        for t, p in procs:
+            return_code = wait_for_process(p)
+            assert isinstance(return_code, int) and not isinstance(
+                return_code, bool
+            ), "Return code should be an integer"
+            if return_code == 0:
+                continue
+
+            message = f"{t} failed!"
+            if return_code < 0:
+                # subprocess.Popen returns the child process' exit signal as
+                # return code -N, where N is the signal number.
+                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
+                message += f" Received signal: {signal_name}"
+
+            err_message = message
+            if err_message is None:
+                continue
+            has_failed = True
+            failure_messages.append(err_message)
+            if not options_clone.continue_through_error:
+                raise RuntimeError(err_message)
+            print_to_stderr(err_message)
         if options.coverage:
             from coverage import Coverage
 

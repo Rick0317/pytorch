@@ -1,14 +1,24 @@
 import os
 import subprocess
 
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from tools.stats.import_test_stats import get_disabled_tests, get_slow_tests
 
 
 def calculate_shards(
-    num_shards: int, tests: List[str], job_times: Dict[str, float]
+    num_shards: int,
+    tests: List[str],
+    job_times: Dict[str, float],
+    is_special_file: Optional[Callable[[str], bool]] = None,
 ) -> List[Tuple[float, List[str]]]:
+    def default_special_files(x: str) -> bool:
+        return True
+
+    is_special_file = (
+        is_special_file if is_special_file is not None else default_special_files
+    )
+
     filtered_job_times: Dict[str, float] = dict()
     unknown_jobs: List[str] = []
     for test in tests:
@@ -23,15 +33,27 @@ def calculate_shards(
         filtered_job_times, key=lambda j: filtered_job_times[j], reverse=True
     )
     sharded_jobs: List[Tuple[float, List[str]]] = [(0.0, []) for _ in range(num_shards)]
-    for job in sorted_jobs:
-        min_shard_index = sorted(range(num_shards), key=lambda i: sharded_jobs[i][0])[0]
+
+    special = [x for x in sorted_jobs if is_special_file(x)]
+    not_special = [x for x in sorted_jobs if x not in special]
+
+    for i in range(0, len(not_special), 3):
+        min_shard_index = sorted(range(num_shards), key=lambda j: sharded_jobs[j][0])[0]
         curr_shard_time, curr_shard_jobs = sharded_jobs[min_shard_index]
-        curr_shard_jobs.append(job)
+        curr_shard_jobs.extend(not_special[i : i + 3])
         sharded_jobs[min_shard_index] = (
-            curr_shard_time + filtered_job_times[job],
+            curr_shard_time + filtered_job_times[not_special[i]],
             curr_shard_jobs,
         )
 
+    for i in range(0, len(special)):
+        min_shard_index = sorted(range(num_shards), key=lambda j: sharded_jobs[j][0])[0]
+        curr_shard_time, curr_shard_jobs = sharded_jobs[min_shard_index]
+        curr_shard_jobs.append(special[i])
+        sharded_jobs[min_shard_index] = (
+            curr_shard_time + filtered_job_times[special[i]],
+            curr_shard_jobs,
+        )
     # Round robin the unknown jobs starting with the smallest shard
     index = sorted(range(num_shards), key=lambda i: sharded_jobs[i][0])[0]
     for job in unknown_jobs:

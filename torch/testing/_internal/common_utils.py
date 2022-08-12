@@ -75,7 +75,7 @@ from torch.onnx import (register_custom_op_symbolic,
                         unregister_custom_op_symbolic)
 torch.backends.disable_global_flags()
 
-PYTEST_FILES = ["test_ops", "test_ops_gradients", "test_ops_jit"]
+PYTEST_FILES = []
 
 FILE_SCHEMA = "file://"
 if sys.platform == 'win32':
@@ -730,7 +730,7 @@ def run_tests(argv=UNITTEST_ARGS):
             # f = failed
             # E = error
             # X = unexpected success
-            exit_code = pytest.main(args=[inspect.getfile(sys._getframe(1)), f'-n={num_procs}', '-vv', '-x',
+            exit_code = pytest.main(args=[inspect.getfile(sys._getframe(1)), '-vv', '-x',
                                     '--reruns=2', '-rfEX', f'--junit-xml-reruns={pytest_report_path}'])
             del os.environ["USING_PYTEST"]
             sanitize_pytest_xml(f'{pytest_report_path}')
@@ -866,6 +866,12 @@ TEST_SKIP_FAST = os.getenv('PYTORCH_TEST_SKIP_FAST', '0') == '1'
 # correction, before throwing out the extra compute and proceeding
 # as we had before.  By default, we don't run these tests.
 TEST_WITH_CROSSREF = os.getenv('PYTORCH_TEST_WITH_CROSSREF', '0') == '1'
+
+
+if (
+    TEST_CUDA and 'PARALLEL_TESTING' in os.environ
+):
+    torch.cuda.set_per_process_memory_fraction(0.21)
 
 def skipIfCrossRef(fn):
     @wraps(fn)
