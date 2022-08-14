@@ -510,8 +510,8 @@ def floor(a):
 
 @_make_elementwise_unary_reference(ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT)
 def frac(x: TensorLikeType) -> TensorLikeType:
-    trunc_x = mul(floor(abs(x)), sign(x))
-    return sub(x, trunc_x)
+    trunc_x = torch.floor(x.abs()) * torch.sign(x)
+    return x - trunc_x
 
 
 # imag does not use _make_elementwise_unary_reference because it does not support out
@@ -615,7 +615,7 @@ def log_softmax(
 
 
 @register_decomposition(torch.ops.aten.logsumexp.default)
-@out_wrapper
+@out_wrapper()
 def logsumexp(
     a: TensorLikeType,
     dim: DimsType,
@@ -665,15 +665,14 @@ def nan_to_num(
     if neginf is None:
         neginf = prims.minimum_value(a.dtype)
 
-    result = where(isnan(a), nan, a)
+    result: Tensor = torch.where(torch.isnan(a), nan, a)  # type: ignore[call-overload, arg-type]
 
-    is_neg = signbit(a)
-    is_neginf = bitwise_and(isinf(a), is_neg)
-    result = where(is_neginf, neginf, result)
+    is_neg: Tensor = torch.signbit(a)
+    is_neginf: Tensor = torch.isinf(a) & is_neg
+    result = torch.where(is_neginf, neginf, result)  # type: ignore[call-overload, arg-type]
 
-    is_posinf = bitwise_and(isinf(a), bitwise_not(is_neg))
-    result = where(is_posinf, posinf, result)
-    return result
+    is_posinf: Tensor = torch.isinf(a) & (~is_neg)
+    return torch.where(is_posinf, posinf, result)  # type: ignore[arg-type]
 
 
 def _neg_meta(a: TensorLikeType):
@@ -3596,9 +3595,9 @@ def masked_fill(a: TensorLikeType, mask: TensorLikeType, value: TensorOrNumberLi
 def allclose(
     a: TensorLikeType,
     b: TensorLikeType,
+    equal_nan: bool = False,
     rtol: float = 1e-05,
     atol: float = 1e-08,
-    equal_nan: bool = False,
 ) -> bool:
     """
     Reference implementation of torch.allclose
@@ -3614,11 +3613,10 @@ def allclose(
 def equal(a: TensorLikeType, b: TensorLikeType) -> bool:
     utils.check_same_device(a, b, allow_cpu_scalar_tensors=False)
     utils.check_same_dtype(a, b)
-
     # Shape check
+
     if a.ndim != b.ndim:
         return False
-
     for x, y in zip(a.shape, b.shape):
         if x != y:
             return False
