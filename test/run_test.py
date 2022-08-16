@@ -981,8 +981,8 @@ def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
             return_code = p.poll()
             if return_code is None:
                 tmp.append((test, p))
-                continue
-            handle_test_completion(test, failure_messages, return_code, options)
+            else:
+                handle_test_completion(test, failure_messages, return_code, options)
         procs = tmp
         time.sleep(0.5)
     return tmp
@@ -1034,8 +1034,9 @@ def main():
 
         for t, p in procs:
             return_code = wait_for_process(p)
-            handle_test_completion(test, failure_messages, return_code, options)
+            handle_test_completion(t, failure_messages, return_code, options)
         del os.environ['PARALLEL_TESTING']
+
         for test in selected_tests_serial:
             options_clone = copy.deepcopy(options)
             if test in USE_PYTEST_LIST:
