@@ -10,6 +10,7 @@ import os
 import pathlib
 import shutil
 import signal
+from sqlite3 import TimestampFromTicks
 import subprocess
 import sys
 import tempfile
@@ -950,6 +951,41 @@ def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
         message += f" Received signal: {signal_name}"
     return message
 
+def handle_test_completion(test, failure_messages, return_code, options):
+    assert isinstance(return_code, int) and not isinstance(
+        return_code, bool
+    ), "Return code should be an integer"
+    if return_code == 0:
+        # success
+        return True
+
+    message = f"{test} failed!"
+    if return_code < 0:
+        # subprocess.Popen returns the child process' exit signal as
+        # return code -N, where N is the signal number.
+        signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
+        message += f" Received signal: {signal_name}"
+
+    err_message = message
+    failure_messages.append(err_message)
+    if not options.continue_through_error:
+        raise RuntimeError(err_message)
+    print_to_stderr(err_message)
+    return False
+
+def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
+    tmp = procs
+    while len(procs) >= proc_limit:
+        tmp = []
+        for test, p in procs:
+            return_code = p.poll()
+            if return_code is None:
+                tmp.append((test, p))
+                continue
+            handle_test_completion(test, failure_messages, return_code, options)
+        procs = tmp
+        time.sleep(0.5)
+    return tmp
 
 def main():
     options = parse_args()
@@ -971,7 +1007,6 @@ def main():
         # downloading test cases configuration to local environment
         get_test_case_configs(dirpath=test_directory)
 
-    has_failed = False
     failure_messages = []
 
     def can_parallel(x: str) -> bool:
@@ -980,46 +1015,14 @@ def main():
         if "distributed" in x:
             return False
         return True
-    selected_tests1 = [x for x in selected_tests if can_parallel(x)]
-    selected_tests2 = [x for x in selected_tests if x not in selected_tests1]
-    if "distributed" in os.environ.get("TEST_CONFIG", ""):
-        selected_tests1 = []
-        selected_tests2 = []
+    selected_tests_parallel = [x for x in selected_tests if can_parallel(x)]
+    selected_tests_serial = [x for x in selected_tests if x not in selected_tests_parallel]
     procs = []
+    proc_limit = 3
     try:
         os.environ['PARALLEL_TESTING'] = '1'
-        for test in selected_tests1:
-            while len(procs) >= 3:
-                tmp = []
-                for t, p in procs:
-                    return_code = p.poll()
-                    if return_code is None:
-                        tmp.append((t, p))
-                        continue
-                    assert isinstance(return_code, int) and not isinstance(
-                        return_code, bool
-                    ), "Return code should be an integer"
-                    if return_code == 0:
-                        continue
-
-                    message = f"{t} failed!"
-                    if return_code < 0:
-                        # subprocess.Popen returns the child process' exit signal as
-                        # return code -N, where N is the signal number.
-                        signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
-                        message += f" Received signal: {signal_name}"
-
-                    err_message = message
-                    if err_message is None:
-                        continue
-                    has_failed = True
-                    failure_messages.append(err_message)
-                    if not options_clone.continue_through_error:
-                        raise RuntimeError(err_message)
-                    print_to_stderr(err_message)
-                procs = tmp
-                time.sleep(0.5)
-
+        for test in selected_tests_parallel:
+            procs = wait_below_proc_limit(procs, proc_limit, failure_messages, options)
             options_clone = copy.deepcopy(options)
             if test in USE_PYTEST_LIST:
                 options_clone.pytest = True
@@ -1031,29 +1034,9 @@ def main():
 
         for t, p in procs:
             return_code = wait_for_process(p)
-            assert isinstance(return_code, int) and not isinstance(
-                return_code, bool
-            ), "Return code should be an integer"
-            if return_code == 0:
-                continue
-
-            message = f"{t} failed!"
-            if return_code < 0:
-                # subprocess.Popen returns the child process' exit signal as
-                # return code -N, where N is the signal number.
-                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
-                message += f" Received signal: {signal_name}"
-
-            err_message = message
-            if err_message is None:
-                continue
-            has_failed = True
-            failure_messages.append(err_message)
-            if not options_clone.continue_through_error:
-                raise RuntimeError(err_message)
-            print_to_stderr(err_message)
+            handle_test_completion(test, failure_messages, return_code, options)
         del os.environ['PARALLEL_TESTING']
-        for test in selected_tests2:
+        for test in selected_tests_serial:
             options_clone = copy.deepcopy(options)
             if test in USE_PYTEST_LIST:
                 options_clone.pytest = True
@@ -1065,52 +1048,12 @@ def main():
                 return_code = run_test(test_module, test_directory, options, wait=True)
             else:
                 return_code = handler(test_module, test_directory, options)
-            assert isinstance(return_code, int) and not isinstance(
-                return_code, bool
-            ), "Return code should be an integer"
-            if return_code == 0:
-                continue
-
-            message = f"{test} failed!"
-            if return_code < 0:
-                # subprocess.Popen returns the child process' exit signal as
-                # return code -N, where N is the signal number.
-                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
-                message += f" Received signal: {signal_name}"
-
-            err_message = message
-            if err_message is None:
-                continue
-            has_failed = True
-            failure_messages.append(err_message)
-            if not options_clone.continue_through_error:
-                raise RuntimeError(err_message)
-            print_to_stderr(err_message)
+            handle_test_completion(test, failure_messages, return_code, options)
 
     finally:
         for t, p in procs:
             return_code = wait_for_process(p)
-            assert isinstance(return_code, int) and not isinstance(
-                return_code, bool
-            ), "Return code should be an integer"
-            if return_code == 0:
-                continue
-
-            message = f"{t} failed!"
-            if return_code < 0:
-                # subprocess.Popen returns the child process' exit signal as
-                # return code -N, where N is the signal number.
-                signal_name = SIGNALS_TO_NAMES_DICT[-return_code]
-                message += f" Received signal: {signal_name}"
-
-            err_message = message
-            if err_message is None:
-                continue
-            has_failed = True
-            failure_messages.append(err_message)
-            if not options_clone.continue_through_error:
-                raise RuntimeError(err_message)
-            print_to_stderr(err_message)
+            handle_test_completion(test, failure_messages, return_code, options)
         if options.coverage:
             from coverage import Coverage
 
@@ -1123,7 +1066,7 @@ def main():
                 if not PYTORCH_COLLECT_COVERAGE:
                     cov.html_report()
 
-    if options.continue_through_error and has_failed:
+    if options.continue_through_error and len(failure_messages) != 0:
         for err in failure_messages:
             print_to_stderr(err)
         sys.exit(1)
