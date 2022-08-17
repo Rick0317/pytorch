@@ -923,7 +923,7 @@ def get_selected_tests(options):
             print("Found test time stats from artifacts")
             test_file_times_config = test_file_times[test_config]
             shards = calculate_shards(num_shards, selected_tests, test_file_times_config,
-                                      is_special_file=is_special_file)
+                                      is_special_file=must_serial)
             _, tests_from_shard = shards[which_shard - 1]
             selected_tests = tests_from_shard
 
