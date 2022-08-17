@@ -1051,6 +1051,7 @@ def main():
             return_code = wait_for_process(p)
             print_log_file(t)
             handle_test_completion(t, failure_messages, return_code, options)
+        procs = []
         del os.environ['PARALLEL_TESTING']
 
         for test in selected_tests_serial:
