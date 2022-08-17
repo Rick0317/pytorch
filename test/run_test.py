@@ -962,7 +962,7 @@ def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
     return message
 
 
-def handle_test_completion(test, failure_messages, return_code, options):
+def handle_test_completion(test, failure_messages, return_code, continue_through_error):
     assert isinstance(return_code, int) and not isinstance(
         return_code, bool
     ), "Return code should be an integer"
@@ -979,7 +979,7 @@ def handle_test_completion(test, failure_messages, return_code, options):
 
     err_message = message
     failure_messages.append(err_message)
-    if not options.continue_through_error:
+    if not continue_through_error:
         raise RuntimeError(err_message)
     print_to_stderr(err_message)
     return False
@@ -1044,7 +1044,7 @@ def main():
             test_module = parse_test_module(test)
 
             print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
-            p = run_test(test_module, test_directory, options, wait=False)
+            p = run_test(test_module, test_directory, options_clone, wait=False)
             procs.append((test, p))
 
         for t, p in procs:
@@ -1063,9 +1063,9 @@ def main():
             print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
             handler = CUSTOM_HANDLERS.get(test_module)
             if handler is None:
-                return_code = run_test(test_module, test_directory, options, wait=True)
+                return_code = run_test(test_module, test_directory, options_clone, wait=True)
             else:
-                return_code = handler(test_module, test_directory, options)
+                return_code = handler(test_module, test_directory, options_clone)
             handle_test_completion(test, failure_messages, return_code, options)
 
     finally:
