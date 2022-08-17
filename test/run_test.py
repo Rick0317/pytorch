@@ -407,12 +407,12 @@ def run_test(
     sys.stdout.flush()
     sys.stderr.flush()
     if wait:
+        p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
+        return wait_for_process(p)
+    else:
         log_file = f"{test_module}.log"
         with open(log_file, "w") as f:
             p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory, stdout=f, stderr=f)
-        return wait_for_process(p)
-    else:
-        p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
         return p
 
 
