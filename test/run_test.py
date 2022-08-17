@@ -410,7 +410,7 @@ def run_test(
         p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
         return wait_for_process(p)
     else:
-        log_file = f"{test_module}.log"
+        log_file = f"{test_module.replace('/', '-')}.log"
         with open(log_file, "w") as f:
             p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory, stdout=f, stderr=f)
         return p
@@ -986,7 +986,7 @@ def handle_test_completion(test, failure_messages, return_code, options):
 
 
 def print_log_file(test):
-    log_file = f"{test}.log"
+    log_file = f"{test.replace('/', '-')}.log"
     with open(log_file, "r") as f:
         print(f.read())
     os.remove(log_file)
