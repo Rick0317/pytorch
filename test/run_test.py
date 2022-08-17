@@ -10,7 +10,6 @@ import os
 import pathlib
 import shutil
 import signal
-from sqlite3 import TimestampFromTicks
 import subprocess
 import sys
 import tempfile
@@ -48,16 +47,6 @@ except ImportError:
     print(
         "Unable to import test_selections from tools/testing. Running without test selection stats..."
     )
-
-
-def is_special_file(file: str) -> bool:
-    build_environment = os.getenv("BUILD_ENVIRONMENT", "linux cuda")
-    if "linux" in build_environment and "cuda" in build_environment:
-        return True
-    else:
-        return file in ['test_nn', 'test_fake_tensor', 'test_cpp_api_parity', 'test_jit_cuda_fuser', 'test_reductions',
-                        'test_cuda', 'test_indexing', 'test_fx_backends', 'test_linalg', 'test_cpp_extensions_jit',
-                        'test_torch', 'test_tensor_creation_ops', 'test_sparse_csr', 'test_dispatch']
 
 
 def discover_tests(
@@ -417,10 +406,14 @@ def run_test(
     print_to_stderr("Executing {} ... [{}]".format(command, datetime.now()))
     sys.stdout.flush()
     sys.stderr.flush()
-    p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
     if wait:
+        log_file = f"{test_module}.log"
+        with open(log_file, "w") as f:
+            p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory, stdout=f, stderr=f)
         return wait_for_process(p)
-    return p
+    else:
+        p = subprocess.Popen(command, universal_newlines=True, cwd=test_directory)
+        return p
 
 
 def test_cuda_primary_ctx(test_module, test_directory, options):
@@ -809,6 +802,23 @@ def exclude_tests(exclude_list, selected_tests, exclude_message=None):
     return selected_tests
 
 
+def must_serial(file: str) -> bool:
+    build_environment = os.getenv("BUILD_ENVIRONMENT", "linux cuda")
+    if "linux" in build_environment and "cuda" in build_environment:
+        return True
+    if (
+        file in CUSTOM_HANDLERS or
+        "distributed" in os.getenv("TEST_CONFIG", "") or
+        file in RUN_PARALLEL_BLOCKLIST or
+        "distributed" in file
+    ):
+        return True
+    else:
+        return file in ['test_nn', 'test_fake_tensor', 'test_cpp_api_parity', 'test_jit_cuda_fuser', 'test_reductions',
+                        'test_cuda', 'test_indexing', 'test_fx_backends', 'test_linalg', 'test_cpp_extensions_jit',
+                        'test_torch', 'test_tensor_creation_ops', 'test_sparse_csr', 'test_dispatch']
+
+
 def get_selected_tests(options):
     selected_tests = options.include
 
@@ -951,6 +961,7 @@ def run_test_module(test: str, test_directory: str, options) -> Optional[str]:
         message += f" Received signal: {signal_name}"
     return message
 
+
 def handle_test_completion(test, failure_messages, return_code, options):
     assert isinstance(return_code, int) and not isinstance(
         return_code, bool
@@ -973,6 +984,14 @@ def handle_test_completion(test, failure_messages, return_code, options):
     print_to_stderr(err_message)
     return False
 
+
+def print_log_file(test):
+    log_file = f"{test}.log"
+    with open(log_file, "r") as f:
+        print(f.read())
+    os.remove(log_file)
+
+
 def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
     tmp = procs
     while len(procs) >= proc_limit:
@@ -982,10 +1001,12 @@ def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
             if return_code is None:
                 tmp.append((test, p))
             else:
+                print_log_file(test)
                 handle_test_completion(test, failure_messages, return_code, options)
         procs = tmp
         time.sleep(0.5)
     return tmp
+
 
 def main():
     options = parse_args()
@@ -1009,13 +1030,7 @@ def main():
 
     failure_messages = []
 
-    def can_parallel(x: str) -> bool:
-        if x in CUSTOM_HANDLERS or is_special_file(x):
-            return False
-        if "distributed" in x:
-            return False
-        return True
-    selected_tests_parallel = [x for x in selected_tests if can_parallel(x)]
+    selected_tests_parallel = [x for x in selected_tests if not must_serial(x)]
     selected_tests_serial = [x for x in selected_tests if x not in selected_tests_parallel]
     procs = []
     proc_limit = 3
@@ -1034,6 +1049,7 @@ def main():
 
         for t, p in procs:
             return_code = wait_for_process(p)
+            print_log_file(t)
             handle_test_completion(t, failure_messages, return_code, options)
         del os.environ['PARALLEL_TESTING']
 
@@ -1054,6 +1070,7 @@ def main():
     finally:
         for t, p in procs:
             return_code = wait_for_process(p)
+            print_log_file(t)
             handle_test_completion(test, failure_messages, return_code, options)
         if options.coverage:
             from coverage import Coverage
