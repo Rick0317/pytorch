@@ -126,7 +126,6 @@ TESTS = discover_tests(
         "distributed/elastic/utils/util_test",
         "distributed/elastic/utils/distributed_test",
         "distributed/elastic/multiprocessing/api_test",
-        "test_deploy",
     ]
 )
 
@@ -1047,11 +1046,11 @@ def main():
             p = run_test(test_module, test_directory, options_clone, wait=False)
             procs.append((test, p))
 
-        for t, p in procs:
+        while len(procs) > 0:
+            t, p = procs.pop()
             return_code = wait_for_process(p)
             print_log_file(t)
             handle_test_completion(t, failure_messages, return_code, options.continue_through_error)
-        procs = []
         del os.environ['PARALLEL_TESTING']
 
         for test in selected_tests_serial:
