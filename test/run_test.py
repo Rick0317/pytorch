@@ -1001,7 +1001,7 @@ def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
                 tmp.append((test, p))
             else:
                 print_log_file(test)
-                handle_test_completion(test, failure_messages, return_code, True)
+                handle_test_completion(test, failure_messages, return_code, options.continue_through_error)
         procs = tmp
         time.sleep(0.5)
     return tmp
@@ -1071,7 +1071,7 @@ def main():
         for t, p in procs:
             return_code = wait_for_process(p)
             print_log_file(t)
-            handle_test_completion(test, failure_messages, return_code, options.continue_through_error)
+            handle_test_completion(test, failure_messages, return_code, True)
         if options.coverage:
             from coverage import Coverage
 
