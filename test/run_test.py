@@ -1001,7 +1001,7 @@ def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
                 tmp.append((test, p))
             else:
                 print_log_file(test)
-                handle_test_completion(test, failure_messages, return_code, options.continue_through_error)
+                handle_test_completion(test, failure_messages, return_code, True)
         procs = tmp
         time.sleep(0.5)
     return tmp
