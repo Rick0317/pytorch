@@ -1007,6 +1007,17 @@ def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
     return tmp
 
 
+def wait_for_all_processes(procs, failure_messages, continue_through_error):
+    all_success = False
+    while len(procs) > 0:
+        t, p = procs.pop()
+        return_code = wait_for_process(p)
+        print_log_file(t)
+        success = handle_test_completion(t, failure_messages, return_code, continue_through_error)
+        all_success = all_success and success
+    return all_success
+
+
 def main():
     options = parse_args()
 
@@ -1046,11 +1057,8 @@ def main():
             p = run_test(test_module, test_directory, options_clone, wait=False)
             procs.append((test, p))
 
-        while len(procs) > 0:
-            t, p = procs.pop()
-            return_code = wait_for_process(p)
-            print_log_file(t)
-            handle_test_completion(t, failure_messages, return_code, options.continue_through_error)
+        wait_for_all_processes(procs, failure_messages, options.continue_through_error)
+
         del os.environ['PARALLEL_TESTING']
 
         for test in selected_tests_serial:
@@ -1068,10 +1076,8 @@ def main():
             handle_test_completion(test, failure_messages, return_code, options.continue_through_error)
 
     finally:
-        for t, p in procs:
-            return_code = wait_for_process(p)
-            print_log_file(t)
-            handle_test_completion(test, failure_messages, return_code, True)
+        wait_for_all_processes(procs, failure_messages, True)
+
         if options.coverage:
             from coverage import Coverage
 
