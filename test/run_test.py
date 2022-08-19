@@ -809,7 +809,8 @@ def must_serial(file: str) -> bool:
         file in CUSTOM_HANDLERS or
         "distributed" in os.getenv("TEST_CONFIG", "") or
         file in RUN_PARALLEL_BLOCKLIST or
-        "distributed" in file
+        "distributed" in file or
+        "test_dims" in file
     ):
         return True
     else:
