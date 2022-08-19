@@ -986,27 +986,23 @@ def handle_test_completion(test, failure_messages, return_code, continue_through
 
 def print_log_file(test):
     log_file = f"{test.replace('/', '-')}.log"
-    print(f"print log file {log_file} belonging to test {test}")
     with open(log_file, "r") as f:
+        print(f'##[group]PRINT LOG FILE {log_file} belonging to test {test}')
         print(f.read())
-    print(f"finished printi g log file {log_file} belonging to test {test}")
+        print('##[endgroup]')
+        print(f"FINISHED PRINT LOG FILE {log_file} belonging to test {test}")
     os.remove(log_file)
 
 
 def wait_below_proc_limit(procs, proc_limit: int, failure_messages, options):
-    tmp = procs
     while len(procs) >= proc_limit:
-        tmp = []
-        for test, p in procs:
-            return_code = p.poll()
-            if return_code is None:
-                tmp.append((test, p))
-            else:
-                print_log_file(test)
-                handle_test_completion(test, failure_messages, return_code, options.continue_through_error)
-        procs = tmp
-        time.sleep(0.5)
-    return tmp
+        t, p = procs.pop(0)
+        return_code = p.poll()
+        if return_code is None:
+            procs.append((t, p))
+        else:
+            print_log_file(t)
+            handle_test_completion(t, failure_messages, return_code, options.continue_through_error)
 
 
 def wait_for_all_processes(procs, failure_messages, continue_through_error):
@@ -1049,7 +1045,7 @@ def main():
     try:
         os.environ['PARALLEL_TESTING'] = '1'
         for test in selected_tests_parallel:
-            procs = wait_below_proc_limit(procs, proc_limit, failure_messages, options)
+            wait_below_proc_limit(procs, proc_limit, failure_messages, options)
             options_clone = copy.deepcopy(options)
             if test in USE_PYTEST_LIST:
                 options_clone.pytest = True
