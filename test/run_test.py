@@ -986,8 +986,10 @@ def handle_test_completion(test, failure_messages, return_code, continue_through
 
 def print_log_file(test):
     log_file = f"{test.replace('/', '-')}.log"
+    print(f"print log file {log_file} belonging to test {test}")
     with open(log_file, "r") as f:
         print(f.read())
+    print(f"finished printi g log file {log_file} belonging to test {test}")
     os.remove(log_file)
 
 
