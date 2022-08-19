@@ -143,14 +143,10 @@ def add_torch_libs():
     # Add the Gloo and TensorPipe backends specific to Facebook networking.
     _libtorch_sources.append("torch/csrc/distributed/c10d/fb/GlooDeviceFactory.cpp")
     _libtorch_sources.append("torch/csrc/distributed/rpc/fb/tensorpipe_agent.cpp")
-
+    enable_flatbuffer = True
     cpp_library(
         name = "libtorch",
-        srcs = _libtorch_sources + ([
-            "torch/csrc/jit/serialization/flatbuffer_serializer.cpp",
-            "torch/csrc/jit/serialization/flatbuffer_serializer_jit.cpp",
-            "torch/csrc/jit/mobile/flatbuffer_loader.cpp",
-        ] if enable_flatbuffer else []),
+        srcs = _libtorch_sources,
         link_whole = True,
         include_directories = include_directories,
         propagated_pp_flags = propagated_pp_flags_cpu,
@@ -168,8 +164,8 @@ def add_torch_libs():
                 "//gloo/fb/transport/tls:tls",
                 "//gloo/transport/tcp:tcp",
                 "//tensorpipe:tensorpipe_cpu",
-            ] + (["//kineto/libkineto:kineto"] if use_kineto() else ["//kineto/libkineto:kineto_activity_header"]) +
-            (["//caffe2:mobile_bytecode"] if enable_flatbuffer else [])
+            ] + (["//kineto/libkineto:kineto"] if use_kineto() else ["//kineto/libkineto:kineto_activity_header"])
+            + (["fbsource//third-party/flatbuffers/fbsource_namespace:flatbuffers-api", "//caffe2:mobile_bytecode"] if enable_flatbuffer else [])
         ),
         exported_external_deps = [
             ("nanopb", None, "protobuf-nanopb"),
@@ -579,7 +575,6 @@ def add_torch_libs():
         base_module = "torch",
         deps = [
             ":_C_impl",
-            "//caffe2:flatbuffer_loader",
         ],
     )
 
@@ -592,8 +587,6 @@ def add_torch_libs():
         base_module = "torch",
         deps = [
             ":_C_impl",
-            "//caffe2:flatbuffer_loader",
-            "//caffe2:flatbuffers_serializer_jit",
         ],
     )
 
