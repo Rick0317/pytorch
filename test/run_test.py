@@ -1042,7 +1042,7 @@ def main():
     selected_tests_parallel = [x for x in selected_tests if not must_serial(x)]
     selected_tests_serial = [x for x in selected_tests if x not in selected_tests_parallel]
     procs = []
-    proc_limit = 3
+    proc_limit = 2 if "macos" in os.getenv("BUILD_ENVIRONMENT", "") else 3
     try:
         os.environ['PARALLEL_TESTING'] = '1'
         for test in selected_tests_parallel:
