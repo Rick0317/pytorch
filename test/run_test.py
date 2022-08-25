@@ -1064,7 +1064,7 @@ def main():
                 which_shard, num_shards = options.shard
                 p = run_test(test_module, test_directory, options_clone, wait=False,
                              extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX',
-                                                  f'--shard-id={which_shard}', f'--num-shards={num_shards}'])
+                                                  f'--shard-id={which_shard-1}', f'--num-shards={num_shards}'])
             else:
                 p = run_test(test_module, test_directory, options_clone, wait=False)
 
