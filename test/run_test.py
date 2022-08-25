@@ -1060,7 +1060,7 @@ def main():
             test_module = parse_test_module(test)
 
             print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
-            if test_file_times_config.get(test) > 3600:
+            if test_file_times_config.get(test, 0) > 3600:
                 which_shard, num_shards = options.shard
                 p = run_test(test_module, test_directory, options_clone, wait=False,
                              extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX',
