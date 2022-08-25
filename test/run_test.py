@@ -1066,8 +1066,7 @@ def main():
                              extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX',
                                                   f'--shard-id={which_shard}', f'--num-shards={num_shards}'])
             else:
-                p = run_test(test_module, test_directory, options_clone, wait=False,
-                             extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX'])
+                p = run_test(test_module, test_directory, options_clone, wait=False)
 
             procs.append((test, p))
 
