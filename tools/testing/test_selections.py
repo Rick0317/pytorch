@@ -59,10 +59,10 @@ def calculate_shards(
     num_shards: int,
     tests: List[str],
     job_times: Dict[str, float],
-    file_must_serial: Optional[Callable[[str], bool]] = None,
+    must_serial: Optional[Callable[[str], bool]] = None,
 ) -> List[TestsToRun]:
-    file_must_serial = (
-        file_must_serial if file_must_serial is not None else lambda x: True
+    must_serial = (
+        must_serial if must_serial is not None else lambda x: True
     )
 
     filtered_job_times: Dict[str, float] = dict()
@@ -84,7 +84,7 @@ def calculate_shards(
         if time > 3600:  # if test takes longer than an hour
             for job in sharded_jobs:
                 job.large_tests.append(test)
-        elif file_must_serial(test):
+        elif must_serial(test):
             min_job.total_time += time
             min_job.must_serial.append(test)
             min_job.update_total_time(job_times)
