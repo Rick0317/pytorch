@@ -1,6 +1,5 @@
 import os
 import subprocess
-import sys
 
 from typing import Any, Callable, Dict, List, Optional
 
@@ -12,7 +11,6 @@ class TestsToRun:
         self.large_tests: List[str] = []
         self.must_serial: List[str] = []
         self.other_tests: List[List[str]] = [[] for _ in range(num_procs)]
-        self.other_tests_flatten: List[str] = []
         self.total_time = 0.0
 
     def update_total_time(self, job_times: Dict[str, float]) -> None:
@@ -34,25 +32,12 @@ class TestsToRun:
             "total_time": self.total_time,
         }
 
-    def flatten_other_tests(self) -> None:
-        self.other_tests_flatten = [test for proc in self.other_tests for test in proc]
-
-    def exclude_tests(self, exclude_list: List[str], reason: str) -> None:
-        self.flatten_other_tests()
-
-        def remove_tests(selected_tests: List[str]) -> List[str]:
-            for exclude_test in exclude_list:
-                tests_copy = selected_tests[:]
-                for test in tests_copy:
-                    if test.startswith(exclude_test):
-                        if reason is not None:
-                            print(f"Excluding {test} {reason}", file=sys.stderr)
-                        selected_tests.remove(test)
-            return selected_tests
-
-        self.large_tests = remove_tests(self.large_tests)
-        self.other_tests_flatten = remove_tests(self.other_tests_flatten)
-        self.must_serial = remove_tests(self.must_serial)
+    def get_all_tests(self) -> List[str]:
+        return (
+            self.large_tests
+            + self.must_serial
+            + [test for proc in self.other_tests for test in proc]
+        )
 
 
 def calculate_shards(
@@ -60,10 +45,8 @@ def calculate_shards(
     tests: List[str],
     job_times: Dict[str, float],
     must_serial: Optional[Callable[[str], bool]] = None,
-) -> List[TestsToRun]:
-    must_serial = (
-        must_serial if must_serial is not None else lambda x: True
-    )
+) -> List[List[str]]:
+    must_serial = must_serial if must_serial is not None else lambda x: True
 
     filtered_job_times: Dict[str, float] = dict()
     unknown_tests: List[str] = []
@@ -97,7 +80,8 @@ def calculate_shards(
     for test in unknown_tests:
         sharded_jobs[index].must_serial.append(test)
         index = (index + 1) % num_shards
-    return sharded_jobs
+
+    return [job.get_all_tests() for job in sharded_jobs]
 
 
 def _query_changed_test_files() -> List[str]:
@@ -127,7 +111,7 @@ def get_reordered_tests(tests: List[str]) -> List[str]:
         prioritized_tests = [
             f for f in changed_files if f.startswith(prefix) and f.endswith(".py")
         ]
-        prioritized_tests = [f[len(prefix):] for f in prioritized_tests]
+        prioritized_tests = [f[len(prefix) :] for f in prioritized_tests]
         prioritized_tests = [f[: -len(".py")] for f in prioritized_tests]
         print("Prioritized test from test file changes.")
 

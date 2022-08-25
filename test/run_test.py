@@ -1036,9 +1036,17 @@ def main():
 
     failure_messages = []
 
-    selected_tests_parallel = selected_tests.other_tests_flatten
-    selected_tests_serial = selected_tests.must_serial
-    selected_tests_large = selected_tests.large_tests
+    test_file_times_config = dict()
+    path = os.path.join(str(REPO_ROOT), TEST_TIMES_FILE)
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            test_file_times = cast(Dict[str, Any], json.load(f))
+            test_config = os.environ.get("TEST_CONFIG")
+            if test_config in test_file_times:
+                test_file_times_config = test_file_times[test_config]
+
+    selected_tests_parallel = [x for x in selected_tests if not must_serial(x)]
+    selected_tests_serial = [x for x in selected_tests if must_serial(x)]
     procs = []
     proc_limit = 2 if "macos" in os.getenv("BUILD_ENVIRONMENT", "") else 3
     shell(["python", "-m", "pip", "install", "pytest-shard"])
@@ -1052,7 +1060,7 @@ def main():
             test_module = parse_test_module(test)
 
             print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
-            if test in selected_tests_large:
+            if test_file_times_config.get(test) > 3600:
                 which_shard, num_shards = options.shard
                 p = run_test(test_module, test_directory, options_clone, wait=False,
                              extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX',
