@@ -1,63 +1,102 @@
 import os
 import subprocess
+import sys
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from tools.stats.import_test_stats import get_disabled_tests, get_slow_tests
+
+
+class TestsToRun:
+    def __init__(self, num_procs: int = 3) -> None:
+        self.large_tests: List[str] = []
+        self.must_serial: List[str] = []
+        self.other_tests: List[List[str]] = [[] for _ in range(num_procs)]
+        self.other_tests_flatten: List[str] = []
+        self.total_time = 0.0
+
+    def update_total_time(self, job_times: Dict[str, float]) -> None:
+        total = sum(job_times[test] for test in self.must_serial)
+        total += max(
+            (sum(job_times[test] for test in proc) for proc in self.other_tests)
+        )
+        self.total_time = total
+
+    def add_to_other_tests(self, test: str, job_times: Dict[str, float]) -> None:
+        min_proc = min(self.other_tests, key=lambda x: sum(job_times[t] for t in x))
+        min_proc.append(test)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "large_tests": self.large_tests,
+            "must_serial": self.must_serial,
+            "other_tests": self.other_tests,
+            "total_time": self.total_time,
+        }
+
+    def flatten_other_tests(self) -> None:
+        self.other_tests_flatten = [test for proc in self.other_tests for test in proc]
+
+    def exclude_tests(self, exclude_list: List[str], reason: str) -> None:
+        self.flatten_other_tests()
+
+        def remove_tests(selected_tests: List[str]) -> List[str]:
+            for exclude_test in exclude_list:
+                tests_copy = selected_tests[:]
+                for test in tests_copy:
+                    if test.startswith(exclude_test):
+                        if reason is not None:
+                            print(f"Excluding {test} {reason}", file=sys.stderr)
+                        selected_tests.remove(test)
+            return selected_tests
+
+        self.large_tests = remove_tests(self.large_tests)
+        self.other_tests_flatten = remove_tests(self.other_tests_flatten)
+        self.must_serial = remove_tests(self.must_serial)
 
 
 def calculate_shards(
     num_shards: int,
     tests: List[str],
     job_times: Dict[str, float],
-    is_special_file: Optional[Callable[[str], bool]] = None,
-) -> List[Tuple[float, List[str]]]:
-    def default_special_files(x: str) -> bool:
-        return True
-
-    is_special_file = (
-        is_special_file if is_special_file is not None else default_special_files
+    file_must_serial: Optional[Callable[[str], bool]] = None,
+) -> List[TestsToRun]:
+    file_must_serial = (
+        file_must_serial if file_must_serial is not None else lambda x: True
     )
 
     filtered_job_times: Dict[str, float] = dict()
-    unknown_jobs: List[str] = []
+    unknown_tests: List[str] = []
     for test in tests:
         if test in job_times:
             filtered_job_times[test] = job_times[test]
         else:
-            unknown_jobs.append(test)
+            unknown_tests.append(test)
 
-    # The following attempts to implement a partition approximation greedy algorithm
-    # See more at https://en.wikipedia.org/wiki/Greedy_number_partitioning
     sorted_jobs = sorted(
         filtered_job_times, key=lambda j: filtered_job_times[j], reverse=True
     )
-    sharded_jobs: List[Tuple[float, List[str]]] = [(0.0, []) for _ in range(num_shards)]
+    sharded_jobs: List[TestsToRun] = [TestsToRun() for _ in range(num_shards)]
 
-    special = [x for x in sorted_jobs if is_special_file(x)]
-    not_special = [x for x in sorted_jobs if x not in special]
+    for test in sorted_jobs:
+        time = filtered_job_times[test]
+        min_job = min(sharded_jobs, key=lambda tests_to_run: tests_to_run.total_time)
+        if time > 3600:  # if test takes longer than an hour
+            for job in sharded_jobs:
+                job.large_tests.append(test)
+        elif file_must_serial(test):
+            min_job.total_time += time
+            min_job.must_serial.append(test)
+            min_job.update_total_time(job_times)
+        else:
+            min_job.add_to_other_tests(test, job_times)
+            min_job.update_total_time(job_times)
 
-    for i in range(0, len(not_special), 3):
-        min_shard_index = sorted(range(num_shards), key=lambda j: sharded_jobs[j][0])[0]
-        curr_shard_time, curr_shard_jobs = sharded_jobs[min_shard_index]
-        curr_shard_jobs.extend(not_special[i : i + 3])
-        sharded_jobs[min_shard_index] = (
-            curr_shard_time + filtered_job_times[not_special[i]],
-            curr_shard_jobs,
-        )
-
-    for i in range(0, len(special)):
-        min_shard_index = sorted(range(num_shards), key=lambda j: sharded_jobs[j][0])[0]
-        curr_shard_time, curr_shard_jobs = sharded_jobs[min_shard_index]
-        curr_shard_jobs.append(special[i])
-        sharded_jobs[min_shard_index] = (
-            curr_shard_time + filtered_job_times[special[i]],
-            curr_shard_jobs,
-        )
-    # Round robin the unknown jobs starting with the smallest shard
-    index = sorted(range(num_shards), key=lambda i: sharded_jobs[i][0])[0]
-    for job in unknown_jobs:
-        sharded_jobs[index][1].append(job)
+            # Round robin the unknown jobs starting with the smallest shard
+    index = min(range(num_shards), key=lambda i: sharded_jobs[i].total_time)
+    for test in unknown_tests:
+        sharded_jobs[index].must_serial.append(test)
+        sharded_jobs[index].update_total_time(job_times)
         index = (index + 1) % num_shards
     return sharded_jobs
 

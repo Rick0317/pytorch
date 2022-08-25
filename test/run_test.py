@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import json
-import time
 from typing import Dict, Optional, List, cast, Any
 
 import torch
@@ -790,17 +789,6 @@ def find_test_index(test, selected_tests, find_last_index=False):
     return found_idx
 
 
-def exclude_tests(exclude_list, selected_tests, exclude_message=None):
-    for exclude_test in exclude_list:
-        tests_copy = selected_tests[:]
-        for test in tests_copy:
-            if test.startswith(exclude_test):
-                if exclude_message is not None:
-                    print_to_stderr("Excluding {} {}".format(test, exclude_message))
-                selected_tests.remove(test)
-    return selected_tests
-
-
 def must_serial(file: str) -> bool:
     build_environment = os.getenv("BUILD_ENVIRONMENT", "linux cuda")
     if "linux" in build_environment and "cuda" in build_environment:
@@ -868,7 +856,7 @@ def get_selected_tests(options):
     if torch.version.cuda is not None and LooseVersion(torch.version.cuda) >= "11.6":
         options.exclude.extend(["distributions/test_constraints"])
 
-    selected_tests = exclude_tests(options.exclude, selected_tests)
+    selected_tests.exclude_tests(options.exclude)
 
     if sys.platform == "win32" and not options.ignore_win_blocklist:
         target_arch = os.environ.get("VSCMD_ARG_TGT_ARCH")
@@ -886,10 +874,10 @@ def get_selected_tests(options):
             WINDOWS_BLOCKLIST.append("test_cpp_extensions_aot_ninja")
             WINDOWS_BLOCKLIST.append("test_cpp_extensions_aot_no_ninja")
 
-        selected_tests = exclude_tests(WINDOWS_BLOCKLIST, selected_tests, "on Windows")
+        selected_tests = selected_tests.exclude_tests(WINDOWS_BLOCKLIST, "on Windows")
 
     elif TEST_WITH_ROCM:
-        selected_tests = exclude_tests(ROCM_BLOCKLIST, selected_tests, "on ROCm")
+        selected_tests = selected_tests.exclude_tests(ROCM_BLOCKLIST, "on ROCm")
 
     # sharding
     if options.shard:
@@ -924,18 +912,16 @@ def get_selected_tests(options):
             test_file_times_config = test_file_times[test_config]
             shards = calculate_shards(num_shards, selected_tests, test_file_times_config,
                                       is_special_file=must_serial)
-            _, tests_from_shard = shards[which_shard - 1]
-            selected_tests = tests_from_shard
+            selected_tests = shards[which_shard - 1]
 
     # skip all distributed tests if distributed package is not available.
     if not dist.is_available():
-        selected_tests = exclude_tests(DISTRIBUTED_TESTS, selected_tests,
-                                       "PyTorch is built without distributed support.")
+        selected_tests = selected_tests.exclude_tests(
+            DISTRIBUTED_TESTS, "PyTorch is built without distributed support.")
 
     # skip tests that require LAPACK when it's not available
     if not torch._C.has_lapack:
-        selected_tests = exclude_tests(TESTS_REQUIRING_LAPACK, selected_tests,
-                                       "PyTorch is built without LAPACK support.")
+        selected_tests = selected_tests(TESTS_REQUIRING_LAPACK, "PyTorch is built without LAPACK support.")
 
     return selected_tests
 
@@ -1039,10 +1025,12 @@ def main():
 
     failure_messages = []
 
-    selected_tests_parallel = [x for x in selected_tests if not must_serial(x)]
-    selected_tests_serial = [x for x in selected_tests if x not in selected_tests_parallel]
+    selected_tests_parallel = selected_tests.other_tests_flatten
+    selected_tests_serial = selected_tests.must_serial
+    selected_tests_large = selected_tests.large_tests
     procs = []
     proc_limit = 2 if "macos" in os.getenv("BUILD_ENVIRONMENT", "") else 3
+    shell(["python", "-m", "pip", "install", "pytest-shard"])
     try:
         os.environ['PARALLEL_TESTING'] = '1'
         for test in selected_tests_parallel:
@@ -1053,7 +1041,15 @@ def main():
             test_module = parse_test_module(test)
 
             print_to_stderr("Running {} ... [{}]".format(test, datetime.now()))
-            p = run_test(test_module, test_directory, options_clone, wait=False)
+            if test in selected_tests_large:
+                which_shard, num_shards = options.shard
+                p = run_test(test_module, test_directory, options_clone, wait=False,
+                             extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX',
+                                                  f'--shard-id={which_shard}', f'--num-shards={num_shards}'])
+            else:
+                p = run_test(test_module, test_directory, options_clone, wait=False,
+                             extra_unittest_args=["--use-pytest", '-vv', '-x', '--reruns=2', '-rfEX'])
+
             procs.append((test, p))
 
         wait_for_all_processes(procs, failure_messages, options.continue_through_error)
