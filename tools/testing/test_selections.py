@@ -96,7 +96,6 @@ def calculate_shards(
     index = min(range(num_shards), key=lambda i: sharded_jobs[i].total_time)
     for test in unknown_tests:
         sharded_jobs[index].must_serial.append(test)
-        sharded_jobs[index].update_total_time(job_times)
         index = (index + 1) % num_shards
     return sharded_jobs
 
@@ -128,7 +127,7 @@ def get_reordered_tests(tests: List[str]) -> List[str]:
         prioritized_tests = [
             f for f in changed_files if f.startswith(prefix) and f.endswith(".py")
         ]
-        prioritized_tests = [f[len(prefix) :] for f in prioritized_tests]
+        prioritized_tests = [f[len(prefix):] for f in prioritized_tests]
         prioritized_tests = [f[: -len(".py")] for f in prioritized_tests]
         print("Prioritized test from test file changes.")
 
