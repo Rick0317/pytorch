@@ -105,10 +105,14 @@ def _get_distributed_settings():
         return 1, 0
 
 
-def _sharding_worker_init_fn(worker_init_fn, world_size, rank_id, worker_id):
-    global_worker_id = worker_id
+def _sharding_worker_init_fn(is_iter, worker_init_fn, world_size, rank_id, worker_id):
     info = torch.utils.data.get_worker_info()
-    total_workers = info.num_workers
+    if is_iter:
+        global_worker_id = worker_id
+        total_workers = info.num_workers
+    else:
+        global_worker_id = 0
+        total_workers = 1
     datapipe = info.dataset
     # To distribute elements across distributed process evenly, we should shard data on distributed
     # processes first then shard on worker processes
@@ -257,7 +261,7 @@ class DataLoader(Generic[T_co]):
             ws, rank = _get_distributed_settings()
             if num_workers > 0:
                 self.worker_init_fn = functools.partial(
-                    _sharding_worker_init_fn, self.worker_init_fn, ws, rank)
+                    _sharding_worker_init_fn, True, self.worker_init_fn, ws, rank)
             else:
                 torch.utils.data.graph_settings.apply_sharding(self.dataset, ws, rank)
         elif isinstance(self.dataset, MapDataPipe):
@@ -265,7 +269,7 @@ class DataLoader(Generic[T_co]):
             ws, rank = _get_distributed_settings()
             if num_workers > 0:
                 self.worker_init_fn = functools.partial(
-                    _sharding_worker_init_fn, self.worker_init_fn, ws, rank)
+                    _sharding_worker_init_fn, False, self.worker_init_fn, ws, rank)
             else:
                 torch.utils.data.graph_settings.apply_sharding(self.dataset, ws, rank)
 
@@ -321,6 +325,10 @@ class DataLoader(Generic[T_co]):
                     "DataLoader with IterableDataset: expected unspecified "
                     "batch_sampler option, but got batch_sampler={}".format(batch_sampler))
         else:
+            if isinstance(dataset, MapDataPipe):
+                if shuffle is not None:
+                    dataset = torch.utils.data.graph_settings.apply_shuffle_settings(dataset, shuffle=shuffle)
+                shuffle = False
             shuffle = bool(shuffle)
             self._dataset_kind = _DatasetKind.Map
 
@@ -566,7 +574,7 @@ class DataLoader(Generic[T_co]):
                 cpuset_checked))
 
     def _get_shared_seed(self):
-        if isinstance(self.dataset, IterDataPipe):
+        if isinstance(self.dataset, (MapDataPipe, IterDataPipe)):
             _shared_seed = torch.empty((), dtype=torch.int64).random_(generator=self.generator).item()
             if dist.is_available() and dist.is_initialized():
                 rank = dist.get_rank()
@@ -621,7 +629,7 @@ class _BaseDataLoaderIter(object):
     def __init__(self, loader: DataLoader) -> None:
         self._dataset = loader.dataset
         self._shared_seed = loader._get_shared_seed()
-        if isinstance(self._dataset, IterDataPipe):
+        if isinstance(self._dataset, (MapDataPipe, IterDataPipe)):
             shared_rng = torch.Generator()
             shared_rng.manual_seed(self._shared_seed)
             self._dataset = torch.utils.data.graph_settings.apply_shuffle_seed(self._dataset, shared_rng)

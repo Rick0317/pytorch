@@ -24,6 +24,7 @@ from torch.utils.data import (
     Dataset,
     IterableDataset,
     IterDataPipe,
+    MapDataPipe,
     Subset,
     TensorDataset,
     communication,
@@ -2242,33 +2243,67 @@ class TestDataLoader2(TestCase):
         self.assertEqual(list(dl), list(dl2))
         self.assertEqual(list(dl), list(dl2_threading))
 
-    class Sorter(IterDataPipe):
+    class IterSorter(IterDataPipe):
         def __init__(self, datapipe):
             self.datapipe = datapipe
 
         def __iter__(self):
             return iter(sorted(self.datapipe))
 
-    def test_shuffle(self):
+    class MapSorter(MapDataPipe):
+        def __init__(self, datapipe):
+            self.datapipe = datapipe
+            self.sorted_datapipe = None
+
+        def __getitem__(self, index):
+            if self.sorted_datapipe is None:
+                self.sorted_datapipe = sorted(list(self.datapipe))
+            return self.sorted_datapipe[index]
+
+        def __len__(self):
+            return len(self.datapipe)
+
+    def test_iter_shuffle(self):
         items = list(range(1000))
         dp = IterableWrapper(items).sharding_filter().shuffle()
 
-        dl = DataLoader2(dp, batch_size=None, num_workers=2, shuffle=False)
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=False)
         self.assertEqual(items, list(dl))
 
-        dl = DataLoader2(dp, batch_size=None, num_workers=2, shuffle=True)
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=True)
         self.assertNotEqual(items, list(dl))
         self.assertEqual(items, sorted(list(dl)))
 
-        dl = DataLoader2(dp, batch_size=None, num_workers=2, shuffle=True)
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=True)
         self.assertNotEqual(items, list(dl))
         self.assertEqual(items, sorted(list(dl)))
 
-        dl = DataLoader2(self.Sorter(dp), batch_size=None, num_workers=2, shuffle=True)
+        dl = DataLoader(self.IterSorter(dp), batch_size=None, num_workers=2, shuffle=True)
         self.assertEqual(list(dl), items)
 
-        dl = DataLoader2(self.Sorter(dp), batch_size=None, num_workers=2, shuffle=True)
+        dl = DataLoader(self.IterSorter(dp), batch_size=None, num_workers=2, shuffle=True)
         self.assertEqual(list(dl), items)
+
+    def test_map_shuffle(self):
+        items = list(range(1000))
+        dp = SequenceWrapper(items).shuffle().sharding_filter()
+
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=False)
+        self.assertEqual(items, list(dl))
+
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=True)
+        self.assertNotEqual(items, list(dl))
+        self.assertEqual(items, sorted(list(dl)))
+
+        dl = DataLoader(dp, batch_size=None, num_workers=2, shuffle=True)
+        self.assertNotEqual(items, list(dl))
+        self.assertEqual(items, sorted(list(dl)))
+
+        dl = DataLoader(self.MapSorter(dp), batch_size=None, num_workers=2, shuffle=True)
+        self.assertEqual(list(dl), items)
+
+        #  dl = DataLoader(self.MapSorter(dp), batch_size=None, num_workers=2, shuffle=True)
+        #  self.assertEqual(list(dl), items)
 
 
 @unittest.skipIf(
@@ -2388,6 +2423,50 @@ class IntegrationTestDataLoaderDataPipe(TestCase):
                     dl._iterator._shutdown_workers()
                     dl._iterator = None
                 del dl
+
+    def test_shuffler_mapdatapipe(self):
+        r"""
+        Verify ``MapDataPipe.shuffle`` is controlled by ``DataLoader``
+        to generate different seeds deterministically per epoch.
+        """
+        exp = list(range(100))
+
+        # Test Deterministic
+        for num_workers, pw in itertools.product((0, 1, 2), (True, False)):
+            if num_workers == 0 and pw:
+                continue
+
+            input_ds = dp.map.SequenceWrapper(exp)
+            shuffle_dp = input_ds.shuffle().sharding_filter()
+
+            mp_ctx = "spawn" if num_workers > 0 else None
+            dl = DataLoader(
+                shuffle_dp,
+                num_workers=num_workers,
+                shuffle=True,
+                multiprocessing_context=mp_ctx,
+                persistent_workers=pw
+            )
+
+            # No seed
+            dl_res_ns = list(dl)
+            self.assertEqual(sorted(dl_res_ns), exp)
+
+            # Same seeds
+            dl_res = []
+            for epoch in range(2):
+                torch.manual_seed(123)
+                dl_res.append(list(dl))
+            self.assertEqual(dl_res[0], dl_res[1])
+            self.assertEqual(sorted(dl_res[0]), exp)
+
+            # Different seeds
+            torch.manual_seed(321)
+            dl_res.append(list(dl))
+
+            self.assertEqual(len(dl_res[0]), len(dl_res[2]))
+            self.assertNotEqual(dl_res[0], dl_res[2])
+            self.assertEqual(sorted(dl_res[0]), sorted(dl_res[2]))
 
 
 class StringDataset(Dataset):
