@@ -1133,5 +1133,65 @@ def forward(self, a_1):
     return zeros
     """)
 
+    # Once op coverage for SymInts improves, we should consider having all of
+    # the functionalization tests run with SymInts by default
+    def test_functionalize_symbolic_shapes(self):
+        # Kill this once we get this test file to use functorch's functionalize()
+        def functionalize(f):
+            def wrapped(x, y):
+                x_func, y_func = torch._to_functional_tensor(x), torch._to_functional_tensor(y)
+                torch._enable_functionalization(reapply_views=True)
+                try:
+                    out = f(x_func, y_func)
+                finally:
+                    torch._disable_functionalization()
+                torch._sync(x_func)
+                torch._sync(y_func)
+                out_unwrapped = torch._from_functional_tensor(out)
+                return out_unwrapped
+            return wrapped
+
+        def f(x, y):
+            val = torch.mul(x, y)
+            val_view = val.view(val.shape)
+            val_view.mul_(x)
+            out = torch.cat([val, val])
+            if out.shape[0] * out.shape[1] > 20:
+                out = out.cos()
+            return out.expand(out.shape)
+
+        try:
+            import functorch
+        except ImportError:
+            # Skipping test if functorch doesn't import in CI for now.
+            return
+        inpts = (torch.randn(5, 1), torch.randn(1, 5))
+        fx_g = make_fx(functorch._src.eager_transforms.functionalize(f), tracing_mode='symbolic')(*inpts)
+        fx_g.graph.eliminate_dead_code()
+        fx_g.recompile()
+
+        out_expected = f(*inpts)
+        out_actual = fx_g(*inpts)
+        self.assertEqual(out_expected, out_actual)
+        self.assertExpectedInline(fx_g.code, """\
+
+
+
+def forward(self, x_1, y_1):
+    mul_tensor = torch.ops.aten.mul.Tensor(x_1, y_1);  y_1 = None
+    size_2 = mul_tensor.size(0)
+    size_3 = mul_tensor.size(1)
+    view_sym_int = torch.ops.aten.view.SymInt(mul_tensor, [size_2, size_3]);  mul_tensor = None
+    mul_tensor_1 = torch.ops.aten.mul.Tensor(view_sym_int, x_1);  view_sym_int = x_1 = None
+    view_sym_int_1 = torch.ops.aten.view.SymInt(mul_tensor_1, [size_2, size_3]);  mul_tensor_1 = size_2 = size_3 = None
+    cat_default = torch.ops.aten.cat.default([view_sym_int_1, view_sym_int_1]);  view_sym_int_1 = None
+    cos_default = torch.ops.aten.cos.default(cat_default);  cat_default = None
+    size_12 = cos_default.size(0)
+    size_13 = cos_default.size(1)
+    expand_sym_int = torch.ops.aten.expand.SymInt(cos_default, [size_12, size_13]);  cos_default = size_12 = size_13 = None
+    return expand_sym_int
+    """)
+
+
 if __name__ == '__main__':
     run_tests()
