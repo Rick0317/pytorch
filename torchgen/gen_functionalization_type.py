@@ -311,6 +311,9 @@ def emit_view_functionalization_body(
             e.expr for e in translate(meta_call_ctx, call_sig.arguments(), method=False)
         ]
 
+        has_dynamic_shape = [f'has_dynamic_shape({x.name})' for x in dispatcher_sig.arguments() if is_tensor_like(x.argument)]
+        any_has_dynamic_shape = ' || '.join(has_dynamic_shape)
+
         if "inplace_view" in f.tags:
             # See Note [Functionalization Pass - Inplace View Ops] for more details
             return f"""
@@ -335,7 +338,7 @@ def emit_view_functionalization_body(
         }}
       );
       {return_type} reference_tensor_output;
-      {{
+      if (!{any_has_dynamic_shape}) {{
         at::AutoDispatchSkipFunctionalize func_guard;
         c10::impl::ExcludeDispatchKeyGuard guard(exclude_keys_for_meta_dispatch);
         {meta_conversion_str}
@@ -350,7 +353,9 @@ def emit_view_functionalization_body(
       // XLA/LTC don't implement the logic to propagate strides correctly, so we need to rely
       // on a reference implementation here (instead of relying on the output from the forward lambda
       // having the correct stride info)
-      at::functionalization::impl::set_sizes_strides_offset({view_tensor_name}, reference_tensor_output);
+      if (!{any_has_dynamic_shape}) {{
+        at::functionalization::impl::set_sizes_strides_offset({view_tensor_name}, reference_tensor_output);
+      }}
       return {view_tensor_name};
     }}
 """
@@ -366,7 +371,7 @@ def emit_view_functionalization_body(
       }}
       auto reapply_views = at::functionalization::impl::getFunctionalizationReapplyViewsTLS();
       {return_type} reference_tensor_output;
-      {{
+      if (!{any_has_dynamic_shape}) {{
         at::AutoDispatchSkipFunctionalize func_guard;
         c10::impl::ExcludeDispatchKeyGuard guard(exclude_keys_for_meta_dispatch);
         {meta_conversion_str}
@@ -394,8 +399,10 @@ def emit_view_functionalization_body(
         }}
       );
       auto out = at::functionalization::impl::create_functional_tensor_with_view_meta(tmp_output, {view_tensor_name}, view_meta);
-      // See  Note [Propagating strides in the functionalization pass]
-      at::functionalization::impl::set_sizes_strides_offset(out, reference_tensor_output);
+      if (!{any_has_dynamic_shape}) {{
+        // See  Note [Propagating strides in the functionalization pass]
+        at::functionalization::impl::set_sizes_strides_offset(out, reference_tensor_output);
+      }}
       return out;
     }}
 """
@@ -575,9 +582,13 @@ def emit_inplace_functionalization_body(
 
     meta_conversion_str, meta_call_ctx = convert_to_meta_tensors(dispatcher_sig)
 
+    has_dynamic_shape = [f'has_dynamic_shape({x.name})' for x in dispatcher_sig.arguments() if is_tensor_like(x.argument)]
+    any_has_dynamic_shape = ' || '.join(has_dynamic_shape)
+
     return f"""
     {dispatcher_sig.defn(name=wrapper_name(f.func), is_redispatching_fn=True)} {{
-      if ({str(f.func.kind() == SchemaKind.inplace).lower()}) {{
+      // For now, only run meta kernels (for error checking) when dynamic shapes aren't involved.
+      if ({str(f.func.kind() == SchemaKind.inplace).lower()} && !({any_has_dynamic_shape})) {{
         // Before converting the mutable op to its functional variant, run meta tensors through the original op.
         // This will help us catch shape errors that apply to inplace ops that wouldn't apply to their functional variants.
         // (We can only do this for inplace ops today though, because they technicaly all support meta tensors).

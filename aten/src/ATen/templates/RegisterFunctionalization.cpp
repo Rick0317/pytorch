@@ -38,9 +38,15 @@ constexpr auto exclude_keys_for_meta_dispatch =
 
 
 inline Tensor to_meta(const Tensor& t) {
-    return at::empty_strided(t.sizes(), t.strides(),
+    if (!t.unsafeGetTensorImpl()->has_symbolic_sizes_strides()) {
+        return at::empty_strided_meta(t.sizes(), t.strides(),
 /*dtype=*/c10::make_optional(t.scalar_type()), /*layout=*/c10::make_optional(t.layout()),
 /*device=*/c10::make_optional(c10::Device(kMeta)), /*pin_memory=*/c10::nullopt);
+    } else {
+        return at::empty_strided_symint(t.sym_sizes(), t.sym_strides(),
+/*dtype=*/c10::make_optional(t.scalar_type()), /*layout=*/c10::make_optional(t.layout()),
+/*device=*/c10::make_optional(c10::Device(kMeta)), /*pin_memory=*/c10::nullopt);
+    }
 }
 
 inline c10::optional<Tensor> to_meta(const c10::optional<Tensor>& t) {
@@ -76,6 +82,37 @@ inline c10::List<c10::optional<Tensor>> to_meta(const c10::List<c10::optional<Te
   return outputs;
 }
 
+inline bool has_dynamic_shape(const Tensor& t) {
+    return t.unsafeGetTensorImpl()->has_symbolic_sizes_strides();
+}
+
+inline bool has_dynamic_shape(const c10::optional<Tensor>& t) {
+  if (t.has_value()) {
+    return has_dynamic_shape(*t);
+  }
+  return false;
+}
+
+inline bool has_dynamic_shape(const TensorList& t_list) {
+  for (const auto i : c10::irange(t_list.size())) {
+    if (has_dynamic_shape(t_list[i])) return true;
+  }
+  return false;
+}
+
+inline bool has_dynamic_shape(const c10::List<Tensor>& t_list) {
+  for (const auto i : c10::irange(t_list.size())) {
+    if (has_dynamic_shape(t_list[i])) return true;
+  }
+  return false;
+}
+
+inline bool has_dynamic_shape(const c10::List<c10::optional<Tensor>>& t_list) {
+  for (const auto i : c10::irange(t_list.size())) {
+    if (has_dynamic_shape(t_list[i])) return true;
+  }
+  return false;
+}
 
 ${func_definitions}
 
