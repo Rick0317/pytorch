@@ -8,14 +8,23 @@ from torch.testing._internal.common_utils import (
     parametrize,
     instantiate_parametrized_tests,
 )
+from torch.testing._internal.common_device_type import (
+    instantiate_device_type_tests,
+    ops,
+)
 from torch.testing._internal.common_methods_invocations import (
     SampleInput,
+    binary_ufuncs,
+    reduction_ops,
+    unary_ufuncs,
 )
 
+from torch._masked import _combine_input_and_mask
 from torch.masked import MaskedTensor, masked_bmm
 from torch.masked.maskedtensor.core import _masks_match, _tensors_match
-from torch.masked.maskedtensor.unary import NATIVE_INPLACE_UNARY_FNS, NATIVE_UNARY_FNS
-from torch.masked.maskedtensor.binary import NATIVE_BINARY_FNS, NATIVE_INPLACE_BINARY_FNS
+from torch.masked.maskedtensor.unary import NATIVE_INPLACE_UNARY_FNS, NATIVE_UNARY_FNS, UNARY_NAMES
+from torch.masked.maskedtensor.binary import NATIVE_BINARY_FNS, NATIVE_INPLACE_BINARY_FNS, BINARY_NAMES
+from torch.masked.maskedtensor.reductions import REDUCE_NAMES
 
 
 def _compare_mt_t(mt_result, t_result):
@@ -95,6 +104,155 @@ def _fix_fn_name(fn_name):
         fn_name = fn_name[:-1]
     return fn_name
 
+
+class TestBasics(TestCase):
+    def test_add(self):
+        data = torch.arange(5.0)
+        mask = torch.tensor([True, True, False, True, False])
+        m0 = MaskedTensor(data, mask)
+        m1 = MaskedTensor(data, ~mask)
+        with self.assertRaisesRegex(ValueError, "Input masks must match."):
+            m0 + m1
+        _compare_mts(m0 + m0, MaskedTensor(torch.tensor([0., 2, 0, 6, 0]), mask))
+
+    def test_softmax(self):
+        data = torch.randn(3, 4) * 0.1
+        mask = torch.tensor(
+            [
+                [True, True, True, False],
+                [False, True, False, True],
+                [True, True, False, False],
+            ]
+        )
+        mt = MaskedTensor(data, mask, requires_grad=True)
+        masked_res = torch.softmax(mt, -1)
+        masked_res.sum().backward()
+        xinf = data.masked_fill(~mask, float("-inf")).detach().clone().requires_grad_()
+        tensor_res = torch.softmax(xinf, -1)
+        tensor_res.sum().backward()
+        _compare_mt_t(masked_res, tensor_res)
+        if mt.grad is not None and xinf.grad is not None:
+            _compare_mt_t(mt.grad, xinf.grad)
+
+    def test_where(self):
+        data = torch.tensor([-10.0, -5, 0, 5, 10, 50, 60, 70, 80, 90, 100])
+        mask = data < 0
+
+        mx = MaskedTensor(data, mask, requires_grad=True)
+        my = MaskedTensor(torch.ones_like(data), ~mask, requires_grad=True)
+        masked_res = torch.where(mask, torch.exp(mx), my)
+        masked_res.sum().backward()
+
+        x = data.detach().clone().requires_grad_()
+        y = torch.ones_like(x, requires_grad=True)
+        tensor_res = torch.where(mask, torch.exp(x), y)
+        tensor_res.sum().backward()
+
+        _compare_mt_t(mx.grad, x.grad)
+        _compare_mt_t(my.grad, y.grad)
+
+    def test_to_sparse(self):
+        for sample in _generate_sample_data():
+            data = sample.input
+            mask = sample.kwargs["mask"]
+            mt = MaskedTensor(data.clone().detach(), mask, requires_grad=True)
+
+            sparse_mt = mt.to_sparse()
+            data.to_sparse().to_dense().sum().backward()
+            sparse_mt.to_dense().sum().backward()
+
+            _compare_mt_t(sparse_mt, data)
+            _compare_mt_t(mt.grad, data.grad)
+
+    def test_to_dense(self):
+        samples = _generate_sample_data(
+            layout=torch.sparse_coo
+        ) + _generate_sample_data(layout=torch.sparse_csr)
+        for sample in samples:
+            data = sample.input
+            mask = sample.kwargs["mask"]
+            mt = MaskedTensor(data, mask, requires_grad=True)
+
+            dense_data = data.to_dense().detach().clone().requires_grad_(True)
+            dense_mt = mt.to_dense()
+            dense_data.sum().backward()
+            dense_mt.sum().backward()
+
+            _compare_mt_t(dense_mt, dense_data)
+            _compare_mt_t(mt.grad.to_dense(), dense_data.grad)
+
+    def test_to_dense_and_sparse_coo(self):
+        for sample in _generate_sample_data(layout=torch.strided):
+            data = sample.input
+            mask = sample.kwargs["mask"]
+            ms = mask.to_sparse_coo().coalesce()
+
+            mt = MaskedTensor(data, mask, requires_grad=True)
+            mts = MaskedTensor(data.sparse_mask(ms), ms, requires_grad=True)
+
+            converted = mt.to_sparse().to_dense()
+            converted.sum().backward()
+
+            converted2 = mts.to_dense()
+            converted2.sum().backward()
+
+            _compare_mts(mt.grad, mts.grad.to_dense())
+
+    def test_to_dense_and_sparse_csr(self):
+        for sample in _generate_sample_data(layout=torch.strided):
+            data = sample.input
+            mask = sample.kwargs["mask"]
+            if data.ndim != 2:
+                continue
+            ms = mask.to_sparse_csr()
+
+            mt = MaskedTensor(data, mask, requires_grad=True)
+            mts = MaskedTensor(data.sparse_mask(ms), ms, requires_grad=True)
+
+            converted = mt.to_sparse_csr().to_dense()
+            converted.sum().backward()
+
+            converted2 = mts.to_dense()
+            converted2.sum().backward()
+
+            _compare_mts(mt.grad, mts.grad.to_dense())
+
+    def test_contiguous(self):
+        data = torch.randn(3, 3)
+
+        contiguous_data = data.clone()
+        mask1 = (contiguous_data > 0).bool()
+        not_contiguous_data = torch.as_strided(data.clone(), (2, 2), (1, 2))
+        mask2 = (not_contiguous_data > 0).bool()
+
+        contiguous_mt = MaskedTensor(contiguous_data, mask1)
+        not_contiguous_mt = MaskedTensor(not_contiguous_data, mask2)
+
+        contiguous_mt_sparse = MaskedTensor(
+            contiguous_data.to_sparse_coo(), mask1.to_sparse_coo()
+        )
+        not_contiguous_mt_sparse = MaskedTensor(
+            not_contiguous_data.to_sparse_coo(), mask2.to_sparse_coo()
+        )
+
+        self.assertEqual(contiguous_data.is_contiguous(), True)
+        self.assertEqual(not_contiguous_data.is_contiguous(), False)
+
+        self.assertEqual(contiguous_mt.is_contiguous(), True)
+        self.assertEqual(not_contiguous_mt.is_contiguous(), False)
+
+        error_msg = "MaskedTensors with sparse data do not have is_contiguous"
+        for t in [contiguous_mt_sparse, not_contiguous_mt_sparse]:
+            with self.assertRaisesRegex(ValueError, error_msg):
+                t.is_contiguous()
+            with self.assertRaisesRegex(ValueError, error_msg):
+                t.contiguous()
+
+        now_contiguous_mt = not_contiguous_mt.contiguous()
+
+        self.assertEqual(now_contiguous_mt.is_contiguous(), True)
+        self.assertEqual(now_contiguous_mt.get_data().is_contiguous(), True)
+        self.assertEqual(now_contiguous_mt.is_contiguous(), True)
 
 class TestUnary(TestCase):
     def _get_test_data(self, fn_name):
@@ -554,6 +712,153 @@ class TestMatMul(TestCase):
             x, ~(key_padding_mask.transpose(0, 1).unsqueeze(-1).expand_as(x))
         )
 
+
+def is_unary(op):
+    return op.name in UNARY_NAMES
+
+def is_binary(op):
+    return op.name in BINARY_NAMES
+
+def is_reduction(op):
+    return op.name in REDUCE_NAMES and op.name not in {"all", "mean", "std", "var"}
+
+mt_unary_ufuncs = [op for op in unary_ufuncs if is_unary(op)]
+mt_binary_ufuncs = [op for op in binary_ufuncs if is_binary(op)]
+mt_reduction_ufuncs = [op for op in reduction_ops if is_reduction(op)]
+
+MASKEDTENSOR_FLOAT_TYPES = {
+    torch.float16,
+    torch.float32,
+    torch.float64,
+}
+
+class TestOperators(TestCase):
+    def _test_unary_binary_equality(self, device, dtype, op, layout=torch.strided):
+        samples = op.sample_inputs(device, dtype, requires_grad=True)
+
+        for sample in samples:
+            input = sample.input
+            sample_args, sample_kwargs = sample.args, sample.kwargs
+            mask = (
+                _create_random_mask(input.shape, device)
+                if "mask" not in sample_kwargs
+                else sample_kwargs.pop("mask")
+            )
+
+            if layout == torch.sparse_coo:
+                mask = mask.to_sparse_coo().coalesce()
+                input = input.sparse_mask(mask)
+            elif layout == torch.sparse_csr:
+                if input.ndim != 2 or mask.ndim != 2:
+                    continue
+                mask = mask.to_sparse_csr()
+                input = input.sparse_mask(mask)
+
+            # Binary operations currently only support same size masks
+            if is_binary(op):
+                if input.shape != sample_args[0].shape:
+                    continue
+                # Binary operations also don't support kwargs right now
+                else:
+                    sample_kwargs = {}
+
+            mt = MaskedTensor(input, mask)
+            mt_args = [
+                MaskedTensor(
+                    arg.sparse_mask(mask) if layout != torch.strided else arg, mask
+                )
+                if torch.is_tensor(arg)
+                else arg
+                for arg in sample_args
+            ]
+
+            mt_result = op(mt, *mt_args, **sample_kwargs)
+            t_result = op(sample.input, *sample_args, **sample_kwargs)
+
+            _compare_mt_t(mt_result, t_result)
+
+            # If the operation is binary, check that lhs = masked, rhs = regular tensor also works
+            if is_binary(op):
+                mt_result2 = op(mt, *mt_args, **sample_kwargs)
+                _compare_mt_t(mt_result2, t_result)
+
+    def _test_reduction_equality(self, device, dtype, op, layout=torch.strided):
+        samples = op.sample_inputs(device, dtype, requires_grad=True)
+
+        for sample in samples:
+            input = sample.input
+            # Reduction operations don't support more advanced args/kwargs right now
+            sample_args, sample_kwargs = (), {}
+
+            if input.dim() == 0 or input.numel() == 0:
+                continue
+
+            mask = (
+                _create_random_mask(input.shape, device)
+                if "mask" not in sample_kwargs
+                else sample_kwargs.pop("mask")
+            )
+
+            if torch.count_nonzero(mask) == 0:
+                continue
+
+            tensor_input = _combine_input_and_mask(op.op, input, mask)
+            if layout == torch.sparse_coo:
+                mask = mask.to_sparse_coo().coalesce()
+                input = input.sparse_mask(mask)
+            elif layout == torch.sparse_csr:
+                if input.ndim != 2 or mask.ndim != 2:
+                    continue
+                mask = mask.to_sparse_csr()
+                input = input.sparse_mask(mask)
+
+            mt = MaskedTensor(input, mask)
+            mt_args = [
+                MaskedTensor(
+                    arg.sparse_mask(mask) if layout != torch.strided else arg, mask
+                )
+                if torch.is_tensor(arg)
+                else arg
+                for arg in sample_args
+            ]
+
+            mt_result = op(mt, *mt_args, **sample_kwargs)
+            t_result = op(tensor_input, *sample_args, **sample_kwargs)
+
+            _compare_mt_t(mt_result, t_result)
+
+    @ops(mt_unary_ufuncs, allowed_dtypes=MASKEDTENSOR_FLOAT_TYPES)  # type: ignore[arg-type]
+    @parametrize("layout", [torch.strided, torch.sparse_coo, torch.sparse_csr])
+    def test_unary_core(self, device, dtype, op, layout):
+        # Skip tests that don't have len(kwargs) == 0
+        skip_variants = {
+            "decimals_0",
+            "decimals_3",
+            "decimals_neg_3",
+        }
+        if op.name == "round" and op.variant_test_name in skip_variants:
+            return
+        self._test_unary_binary_equality(device, dtype, op)
+
+    @ops(mt_binary_ufuncs, allowed_dtypes=MASKEDTENSOR_FLOAT_TYPES)  # type: ignore[arg-type]
+    @parametrize("layout", [torch.strided, torch.sparse_coo, torch.sparse_csr])
+    def test_binary_core(self, device, dtype, op, layout):
+        self._test_unary_binary_equality(device, dtype, op, layout)
+
+    @ops(mt_reduction_ufuncs, allowed_dtypes=MASKEDTENSOR_FLOAT_TYPES)  # type: ignore[arg-type]
+    @parametrize("layout", [torch.strided, torch.sparse_coo, torch.sparse_csr])
+    def test_reduction_all(self, device, dtype, op, layout):
+        # argmin and argmax are not currently supported for torch.sparse_csr
+        if op.name in {"argmin", "argmax"} and layout == torch.sparse_csr:
+            return
+
+        self._test_reduction_equality(device, dtype, op, layout)
+
+
+only_for = ("cpu", "cuda")
+instantiate_device_type_tests(TestOperators, globals(), only_for=only_for)
+
+instantiate_parametrized_tests(TestBasics)
 instantiate_parametrized_tests(TestUnary)
 instantiate_parametrized_tests(TestBinary)
 instantiate_parametrized_tests(TestReductions)
