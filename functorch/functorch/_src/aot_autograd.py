@@ -285,6 +285,19 @@ def aot_dispatch_base(flat_fn, flat_args: List[Tensor], aot_config: AOTConfig):
     return new_fn
 
 
+# Translate view => reshape to maintain a "stride-agnostic" trace
+# The issue here is that if we're tracing multiple times, reshapes in the
+# original trace might get turned into views.
+# As our decompositions don't necessarily preserve the strides, we need to
+# ensure our trace is still "stride-agnostic".
+# This function does so.
+def _make_stride_agnostic(fx_g: torch.fx.GraphModule):
+    for node in fx_g.graph.nodes:
+        if node.target == aten.view.default:
+            node.target = aten.reshape.default
+    fx_g.recompile()
+
+
 def aot_dispatch_autograd(flat_fn, flat_args: List[Tensor], aot_config: AOTConfig):
     joint_forward_backward = create_joint_forward_backward(flat_fn)
 
@@ -304,6 +317,8 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Tensor], aot_config: AOTConfi
     if config.use_functionalize:
         # Trace once without decompositions, into a graph of ATen ops.
         fx_g = make_fx(joint_forward_backward)(*joint_inputs)
+
+        _make_stride_agnostic(fx_g)
 
         def fake_fn(primals, tangents):
             with torch.fx.traceback.override_stack_trace():
@@ -623,6 +638,7 @@ def aot_function(
         compile_cache = CompileCache()
     if bw_compiler is None:
         bw_compiler = fw_compiler
+
     aot_config = AOTConfig(
         fw_compiler=fw_compiler,
         bw_compiler=bw_compiler,
