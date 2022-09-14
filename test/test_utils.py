@@ -468,6 +468,7 @@ class TestDataLoaderUtils(TestCase):
         dataiter = iter(dataloader)
         self.assertEqual(len(list(dataiter)), 2)
 
+    @unittest.skip("FIXME: Intermittent CUDA out-of-memory error on Windows and time-out under ASAN")
     def test_multi_drop(self):
         dataloader : DataLoader = DataLoader(self.dataset,  # type: ignore[arg-type]
                                              batch_size=self.batch_size,
