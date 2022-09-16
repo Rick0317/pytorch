@@ -297,6 +297,8 @@ class DispatchKeySet final {
                              DispatchKey::Quantized,
                              DispatchKey::Sparse,
                              DispatchKey::AutogradFunctionality,
+                             DispatchKey::NestedTensor,
+                             DispatchKey::AutocastFunctionality,
                          })
               .repr_) == 0));
     return static_cast<bool>((repr_ & ks.repr_) != 0);
@@ -639,9 +641,7 @@ constexpr DispatchKeySet autograd_dispatch_keyset = DispatchKeySet({
 });
 
 constexpr DispatchKeySet autocast_dispatch_keyset = DispatchKeySet({
-    DispatchKey::AutocastCPU,
-    DispatchKey::AutocastCUDA,
-    DispatchKey::AutocastXPU,
+    DispatchKey::AutocastFunctionality,
 });
 
 // See Note [TLS Initialization]
@@ -651,9 +651,7 @@ constexpr DispatchKeySet default_included_set = DispatchKeySet({
 });
 
 constexpr DispatchKeySet default_excluded_set = DispatchKeySet({
-    DispatchKey::AutocastCPU,
-    DispatchKey::AutocastCUDA,
-    DispatchKey::AutocastXPU,
+    DispatchKey::AutocastFunctionality,
 });
 
 constexpr DispatchKeySet autograd_dispatch_keyset_with_ADInplaceOrView =
@@ -839,8 +837,25 @@ inline DispatchKeySet getAutocastRelatedKeySetFromBackend(BackendComponent t) {
     case BackendComponent::XPUBit:
       return autocast_xpu_ks;
     case BackendComponent::CUDABit:
-    case BackendComponent::XLABit:
       return autocast_cuda_ks;
+    case BackendComponent::XLABit:
+      return DispatchKeySet(DispatchKey::AutocastXLA);
+    case BackendComponent::IPUBit:
+      return DispatchKeySet(DispatchKey::AutocastIPU);
+    case BackendComponent::LazyBit:
+      return DispatchKeySet(DispatchKey::AutocastLazy);
+    case BackendComponent::MetaBit:
+      return DispatchKeySet(DispatchKey::AutocastMeta);
+    case BackendComponent::MPSBit:
+      return DispatchKeySet(DispatchKey::AutocastMPS);
+    case BackendComponent::HPUBit:
+      return DispatchKeySet(DispatchKey::AutocastHPU);
+    case BackendComponent::PrivateUse1Bit:
+      return DispatchKeySet(DispatchKey::AutocastPrivateUse1);
+    case BackendComponent::PrivateUse2Bit:
+      return DispatchKeySet(DispatchKey::AutocastPrivateUse2);
+    case BackendComponent::PrivateUse3Bit:
+      return DispatchKeySet(DispatchKey::AutocastPrivateUse3);
     default:
       return DispatchKeySet();
   }

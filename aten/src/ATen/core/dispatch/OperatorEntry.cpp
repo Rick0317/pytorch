@@ -275,6 +275,10 @@ std::pair<const AnnotatedKernel&, const char*> OperatorEntry::computeDispatchTab
   //          cause confusion for AutogradOther. It's pretty straightforward to use Autograd (if available)
   //          in this case.
   //    (2.4) Use kernel from DispatchKey::Autograd if available
+  //    (2.5) Use kernel from DispatchKey::Autocast if available.
+  //          This alias key should be completely disjoint from all other alias keys,
+  //          so priority shouldn't really matter.
+  //          See Note [Alias Dispatch Key : Autocast]
   //    The implementation of (2.2) relies on the invariant that for a given backend,
   //    `computeDispatchTableEntryWithDebug()` will be called for that backend's autograd key after the
   //    backend key. See Note [Refresh Runtime Autograd entries in dispatchTable_]
@@ -348,6 +352,14 @@ std::pair<const AnnotatedKernel&, const char*> OperatorEntry::computeDispatchTab
   if (isIncludedInAlias(dispatch_key, DispatchKey::Autograd)) {
     if (auto autograd_registration = getKernelForDispatchKey(DispatchKey::Autograd)) {
       return {*autograd_registration, "autograd kernel"};
+    }
+  }
+
+  // 2.5 Use Autograd kernel if available.
+  //     See Note [Undefined in dispatchTable_] for the special handling for Undefined.
+  if (dispatch_key == DispatchKey::Undefined || isIncludedInAlias(dispatch_key, DispatchKey::Autocast)) {
+    if (auto autocast_registration = getKernelForDispatchKey(DispatchKey::Autocast)) {
+      return {*autocast_registration, "default backend kernel"};
     }
   }
 
