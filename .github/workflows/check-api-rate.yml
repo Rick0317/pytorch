@@ -16,7 +16,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTORCHBOT_TOKEN: ${{ secrets.GH_PYTORCHBOT_TOKEN}}
           MERGEBOT_TOKEN: ${{ secrets.MERGEBOT_TOKEN}}
-          ROCKEST_API_KEY: ${{ secrets.ROCKSET_API_KEY }}
+          ROCKSET_API_KEY: ${{ secrets.ROCKSET_API_KEY }}
         run: |
           pip install rockset==0.8.10
 
