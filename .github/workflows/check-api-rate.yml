@@ -5,7 +5,7 @@ on:
 
 jobs:
   check-api-rate:
-    runs-on: [self-hosted, linux.2xlarge]
+    runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - name: Get our GITHUB_TOKEN API limit usage
