@@ -1,0 +1,39 @@
+name: Write token usage to rockset
+
+on:
+  push:
+
+jobs:
+  check-api-rate:
+    runs-on: [self-hosted, linux.2xlarge]
+    continue-on-error: true
+    steps:
+      - name: Get our GITHUB_TOKEN API limit usage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTORCHBOT_TOKEN: ${{ secrets.GH_PYTORCHBOT_TOKEN}}
+          MERGEBOT_TOKEN: ${{ secrets.MERGEBOT_TOKEN}}
+          ROCKEST_API_KEY: ${{ secrets.ROCKSET_API_KEY }}
+        run: |
+          pip install rockset==0.8.10
+
+          python - << EOF
+          import requests
+          import rockset
+          import os
+
+          rs = rockset.Client(
+              api_server="api.rs2.usw2.rockset.com", api_key=os.environ["ROCKSET_API_KEY"]
+          )
+
+          tokens = ["GITHUB_TOKEN", "MERGEBOT_TOKEN", "PYTORCHBOT_TOKEN"]
+
+          for token_name in tokens:
+              headers = {
+                  "Accept": "application/vnd.github.v3+json",
+                  "Authorization": f"token {os.environ[token_name]}",
+              }
+              res = requests.get("https://api.github.com/rate_limit", headers=headers).json()
+              res["token"] = token_name
+              print(res)
+          EOF
