@@ -36,4 +36,5 @@ jobs:
               res = requests.get("https://api.github.com/rate_limit", headers=headers).json()
               res["token"] = token_name
               print(res)
+              print(rs.Collection.retrieve("token_usage").add_docs([res]))
           EOF
