@@ -2,6 +2,9 @@ name: Write token usage to rockset
 
 on:
   push:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
 
 jobs:
   check-api-rate:
