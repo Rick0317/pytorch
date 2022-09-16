@@ -139,6 +139,11 @@ def _is_fsdp_flattened(tensor: torch.Tensor) -> bool:
     return getattr(tensor, FSDP_FLATTENED, False)
 
 
+def _same_storage(x: torch.Tensor, y: torch.Tensor) -> bool:
+    """Returns if ``x`` and ``y`` share the same storage."""
+    return x.storage().data_ptr() == y.storage().data_ptr()
+
+
 def p_assert(cond: Any, s: Any, raise_assertion_error: bool = True) -> None:
     """This is used as an alternate to ``assert`` when in the backward context
     to print the error message ``s`` since otherwise, it is swallowed."""
