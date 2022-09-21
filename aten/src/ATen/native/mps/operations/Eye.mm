@@ -33,16 +33,18 @@
 namespace at {
 namespace native {
 
-Tensor& eye_out_mps(int64_t n, Tensor& result) {
-  // the default value of `m` equals to `n`
-  return eye_out_mps(n, n, result);
-}
-
-Tensor& eye_out_mps(int64_t n, int64_t m, Tensor& result) {
+// It's not clear why this implementation is needed.
+// The implementation in core is composite in terms of zero_() and diagonal(k).fill_(1)
+Tensor& eye_out_mps(int64_t n, int64_t m, int64_t k, Tensor& result) {
 
   // This is one example of boiler-plate error checking, taking after CPU/CUDA counterparts
   TORCH_CHECK(n >= 0, "n must be greater or equal to 0, got ", n);
   TORCH_CHECK(m >= 0, "m must be greater or equal to 0, got ", m);
+  TORCH_CHECK((k == 0) || (k > -n && k < m),
+              "k out of range. Should be -",
+              n, " < k < ", m, ") or 0, but got ", k);
+  TORCH_CHECK(k == 0, "Only k == 0 supported on MPS. Got: ", k);
+
 
   result.resize_({n, m});
   result.zero_();

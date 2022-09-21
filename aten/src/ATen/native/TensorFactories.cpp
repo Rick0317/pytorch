@@ -27,6 +27,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <c10/core/SymIntArrayRef.h>
 
@@ -414,17 +415,40 @@ Tensor new_empty_strided_symint(
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ eye ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// The signature of this function should be (see torch._refs.eye)
+// Tensor eye(int64_t n, c10::optional<int64_t> m, int64_t k,
+//     c10::optional<ScalarType> dtype,
+//     c10::optional<Layout> layout,
+//     c10::optional<Device> device,
+//     c10::optional<bool> pin_memory) {
+// We are keeping all the other signatures both for BC issues and tobe able to call
+// at::eye(3, input.options();
 
 Tensor eye(int64_t n,
     c10::optional<ScalarType> dtype,
     c10::optional<Layout> layout,
     c10::optional<Device> device,
     c10::optional<bool> pin_memory) {
-  // the default value of `m` equals to `n`
-  return at::eye(n, n, dtype, layout, device, pin_memory);
+  return at::eye(n, n, 0, dtype, layout, device, pin_memory);
 }
 
 Tensor eye(int64_t n, int64_t m,
+    c10::optional<ScalarType> dtype,
+    c10::optional<Layout> layout,
+    c10::optional<Device> device,
+    c10::optional<bool> pin_memory) {
+  return at::eye(n, m, 0, dtype, layout, device, pin_memory);
+}
+
+Tensor eye(int64_t n, c10::optional<int64_t> k,
+    c10::optional<ScalarType> dtype,
+    c10::optional<Layout> layout,
+    c10::optional<Device> device,
+    c10::optional<bool> pin_memory) {
+  return at::eye(n, n, k.value_or(0), dtype, layout, device, pin_memory);
+}
+
+Tensor eye(int64_t n, int64_t m, int64_t k,
     c10::optional<ScalarType> dtype,
     c10::optional<Layout> layout,
     c10::optional<Device> device,
@@ -433,32 +457,42 @@ Tensor eye(int64_t n, int64_t m,
   TensorOptions options = TensorOptions().dtype(dtype).layout(layout).device(device).pinned_memory(pin_memory);
 
   auto tensor = at::empty({0}, options); // to be resized
-  return at::eye_out(tensor, n, m);
+  at::eye_outf(n, m, k, tensor);
+  return tensor;
 }
 
-Tensor& eye_out_cpu(int64_t n, Tensor& result) {
-  // the default value of `m` equals to `n`
-  return native::eye_out_cpu(n, n, result);
+Tensor& eye_out(int64_t n, Tensor& result) {
+  return at::eye_outf(n, n, 0, result);
 }
 
-Tensor& eye_out_cpu(int64_t n, int64_t m, Tensor& result) {
+Tensor& eye_out(int64_t n, int64_t m, Tensor& result) {
+  return at::eye_outf(n, m, 0, result);
+}
+
+Tensor& eye_out(int64_t n, c10::optional<int64_t> k, Tensor& result) {
+  return at::eye_outf(n, n, k.value_or(0), result);
+}
+
+Tensor& eye_out(int64_t n, int64_t m, int64_t k, Tensor& result) {
   TORCH_CHECK(n >= 0, "n must be greater or equal to 0, got ", n);
   TORCH_CHECK(m >= 0, "m must be greater or equal to 0, got ", m);
-
+  TORCH_CHECK((k == 0) || (k > -n && k < m),
+              "k out of range. Should be -",
+              n, " < k < ", m, ") or 0, but got ", k);
   result.resize_({n, m});
 
   if (result.is_meta()) return result;
 
+
   result.zero_();
-
-  int64_t sz = std::min<int64_t>(n, m);
-  AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND2(at::ScalarType::Half, at::ScalarType::Bool, result.scalar_type(), "eye", [&]() -> void {
-    scalar_t* result_data = result.data_ptr<scalar_t>();
-    at::parallel_for(0, sz, internal::GRAIN_SIZE, [&](int64_t p_begin, int64_t p_end) {
-      for (const auto i : c10::irange(p_begin, p_end))result_data[i*(result.strides()[0] + result.strides()[1])] = 1;
-    });
-  });
-
+  if (result.is_lazy()) {
+    // LTC does not play well with diagonal as it uses as_strided
+    // Compute length of the diagonal
+    auto l = std::min(m, n) - std::abs(k);
+    result.copy_(at::diagonal_scatter(result, at::ones({l}, result.options()), k));
+  } else {
+    result.diagonal(k).fill_(1);
+  }
   return result;
 }
 
