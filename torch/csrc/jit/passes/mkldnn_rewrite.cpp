@@ -6,6 +6,7 @@
 #include <torch/csrc/jit/passes/dead_code_elimination.h>
 #include <torch/csrc/jit/passes/graph_rewrite_helper.h>
 #include <torch/csrc/jit/passes/mkldnn_rewrite.h>
+#include <torch/csrc/jit/passes/mkldnn_rewrite_helper.h>
 #include <torch/csrc/jit/tensorexpr/kernel.h>
 
 namespace torch {
@@ -59,6 +60,14 @@ void insertPrePackedConvOpForNode(Node* n) {
   prepack_node->addInput(input_size);
   auto attr = graph->insertConstant(IValue("none"));
   prepack_node->addInput(attr);
+  std::vector<c10::optional<at::Scalar>> empty_scalars;
+  auto scalars = graph->insertConstant(IValue(empty_scalars));
+  prepack_node->addInput(scalars);
+
+  c10::optional<std::string> empty_algorithm;
+  auto algorithm = graph->insertConstant(IValue(empty_algorithm));
+  prepack_node->addInput(algorithm);
+
   prepack_node->output()->setType(
       getCustomClass("__torch__.torch.classes.mkldnn.ConvOpContext"));
   graph->insertNode(prepack_node);
@@ -128,21 +137,21 @@ void insertMkldnnPrePackedOps(script::Module& module) {
 void FuseReluWithPackedOps(std::shared_ptr<Graph>& graph) {
   auto conv_op_rstring = at::jit::CodeTemplate(R"(
     graph(%input, %weight, %bias, %stride:int[], %padding:int[],
-          %dilation:int[], %groups:int, %input_size:int[], %dummy_attr:str):
+          %dilation:int[], %groups:int, %input_size:int[], %dummy_attr:str, %scalars_placeholder: Scalar?[], %algorithm_placeholder: str?):
         %packed_weight_bias = mkldnn_prepacked::conv2d_prepack(
             %weight, %bias, %stride, %padding, %dilation, %groups,
-            %input_size, %dummy_attr)
+            %input_size, %dummy_attr, %scalars_placeholder, %algorithm_placeholder)
         %conv2d_res = mkldnn_prepacked::conv2d_run(%input, %packed_weight_bias)
         %res = aten::${op}(%conv2d_res)
         return (%res))");
 
   auto conv_op_fused_rstring = at::jit::CodeTemplate(R"(
     graph(%input, %weight, %bias, %stride:int[], %padding:int[],
-          %dilation:int[], %groups:int, %input_size:int[], %dummy_attr:str):
+          %dilation:int[], %groups:int, %input_size:int[], %dummy_attr:str, %scalars_placeholder: Scalar?[], %algorithm_placeholder: str?):
         %attr: str = prim::Constant[value="${op_attr}"]()
         %packed_weight_bias : __torch__.torch.classes.mkldnn.ConvOpContext = mkldnn_prepacked::conv2d_prepack(
             %weight, %bias, %stride, %padding, %dilation, %groups,
-            %input_size, %attr)
+            %input_size, %attr, %scalars_placeholder, %algorithm_placeholder)
         %res = mkldnn_prepacked::conv2d_run(%input, %packed_weight_bias)
         return (%res))");
 
@@ -165,6 +174,66 @@ void FuseReluWithPackedOps(std::shared_ptr<Graph>& graph) {
     auto filters = it.second;
     rewriter.runOnGraph(graph, filters);
   }
+}
+
+void FuseAddReluWithPackedOps(std::shared_ptr<Graph>& graph) {
+  SubgraphRewriter rewriter_add_v1, rewriter_add_v2, rewriter_add_relu;
+  // conv   Y
+  //   \   /
+  //    add
+  // Y = conv_output + alpha*Y
+  auto conv_add_v1 = R"(
+    graph(%input, %weight, %bias, %accumu, %alpha, %stride:int[], %padding:int[], %dilation:int[], %groups:int, %input_size:int[],
+          %attr_placeholder:str, %scalars_placeholder: Scalar?[], %algorithm_placeholder: str?):
+        %packed_weight = mkldnn_prepacked::conv2d_prepack(%weight, %bias, %stride, %padding, %dilation, %groups, %input_size, %attr_placeholder, %scalars_placeholder, %algorithm_placeholder)
+        %x = mkldnn_prepacked::conv2d_run(%input, %packed_weight)
+        %res = aten::add(%x, %accumu, %alpha)
+        return (%res))";
+
+  //  Y     conv
+  //   \   /
+  //    add
+  // Y = Y + alpha*conv_output, alpha should be one.
+  auto conv_add_v2 = R"(
+    graph(%input, %weight, %bias, %accumu, %alpha, %stride:int[], %padding:int[], %dilation:int[], %groups:int, %input_size:int[],
+          %attr_placeholder:str, %scalars_placeholder: Scalar?[], %algorithm_placeholder: str?):
+        %packed_weight = mkldnn_prepacked::conv2d_prepack(%weight, %bias, %stride, %padding, %dilation, %groups, %input_size, %attr_placeholder, %scalars_placeholder, %algorithm_placeholder)
+        %x = mkldnn_prepacked::conv2d_run(%input, %packed_weight)
+        %res = aten::add(%accumu, %x, %alpha)
+        return (%res))";
+
+  auto conv_add_fused = R"(
+    graph(%input, %weight, %bias, %accumu, %alpha, %stride:int[], %padding:int[], %dilation:int[], %groups:int, %input_size:int[],
+          %attr_placeholder:str, %scalars_placeholder: Scalar?[], %algorithm_placeholder: str?):
+        %attr: str = prim::Constant[value="sum"]()
+        %scalars: Scalar?[] = prim::ListConstruct(%alpha)
+        %packed_weight = mkldnn_prepacked::conv2d_prepack(%weight, %bias, %stride, %padding, %dilation, %groups, %input_size, %attr, %scalars, %algorithm_placeholder)
+        %res = mkldnn_prepacked::conv2d_sum_run(%input, %accumu, %packed_weight)
+        return (%res))";
+
+  auto conv_add_relu = R"(
+    graph(%input, %weight, %bias, %accumu, %stride:int[], %padding:int[], %dilation:int[], %groups:int, %input_size:int[],
+          %attr:str, %scalars: Scalar?[], %algorithm_placeholder: str?):
+        %packed_weight = mkldnn_prepacked::conv2d_prepack(%weight, %bias, %stride, %padding, %dilation, %groups, %input_size, %attr, %scalars, %algorithm_placeholder)
+        %x = mkldnn_prepacked::conv2d_sum_run(%input, %accumu, %packed_weight)
+        %res = aten::relu(%x)
+        return (%res))";
+
+  auto conv_add_relu_fused = R"(
+    graph(%input, %weight, %bias, %accumu, %stride:int[], %padding:int[], %dilation:int[], %groups:int, %input_size:int[],
+          %attr:str, %scalars: Scalar?[], %algorithm_placeholder: str?):
+        %attr_new: str = prim::Constant[value="sum_relu"]()
+        %packed_weight = mkldnn_prepacked::conv2d_prepack(%weight, %bias, %stride, %padding, %dilation, %groups, %input_size, %attr_new, %scalars, %algorithm_placeholder)
+        %res = mkldnn_prepacked::conv2d_sum_run(%input, %accumu, %packed_weight)
+        return (%res))";
+
+  // conv+add
+  rewriter_add_v1.RegisterRewritePattern(conv_add_v1, conv_add_fused);
+  rewriter_add_v2.RegisterRewritePattern(conv_add_v2, conv_add_fused);
+  rewriter_add_relu.RegisterRewritePattern(conv_add_relu, conv_add_relu_fused);
+  rewriter_add_v1.runOnGraph(graph, add_accumu_on_right);
+  rewriter_add_v2.runOnGraph(graph, add_accumu_on_left);
+  rewriter_add_relu.runOnGraph(graph);
 }
 
 void PrePackingOpsFolder(Block* b) {
@@ -217,7 +286,12 @@ void FuseConvWithEltwise(std::shared_ptr<Graph>& graph) {
       "After insertMkldnnPrePackedOps, before FuseReluWithPackedOps\n", *graph);
   FuseReluWithPackedOps(graph);
   GRAPH_DEBUG(
-      "After FuseReluWithPackedOps, before FoldPrePackingOps\n", *graph);
+      "After FuseReluWithPackedOps, before FuseAddReluWithPackedOps\n", *graph);
+  FuseAddReluWithPackedOps(graph);
+  GRAPH_DEBUG(
+      "After FuseAddReluWithPackedOps, before ConstantPropagation\n", *graph);
+  ConstantPropagation(graph);
+  GRAPH_DEBUG("After ConstantPropagation, before FoldPrePackingOps\n", *graph);
   FoldPrePackingOps(graph);
   GRAPH_DEBUG("After FoldPrePackingOps. End of FuseConvWithEltwise\n", *graph);
 }
