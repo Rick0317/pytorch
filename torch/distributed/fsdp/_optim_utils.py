@@ -294,7 +294,7 @@ def _flatten_optim_state_dict(
     for param, unflat_param_names in param_to_unflat_param_names.items():
         if isinstance(param, FlatParameter):  # flatten FSDP parameters' states
             assert param in flat_param_to_fsdp_module, (
-                "Check the `flat_param_to_fsdp_module` construction\n" f"param: {param}"
+                f"Check the `flat_param_to_fsdp_module` construction\nparam: {param}"
             )
             fsdp_module = flat_param_to_fsdp_module[param]
             flat_state = _flatten_optim_state(
