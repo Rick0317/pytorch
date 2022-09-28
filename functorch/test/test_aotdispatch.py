@@ -426,83 +426,6 @@ class TestAOTAutograd(AOTTestCase):
 
 
 
-class TestEagerFusionOpInfo(AOTTestCase):
-    @ops(op_db + additional_op_db, allowed_dtypes=(torch.float,))
-    # entries in here need don't work and need to be fixed.
-    # Each one of these is a bug (or needs to be investigated)
-    @skipOps('TestEagerFusionOpInfo', 'test_aot_autograd_exhaustive', {
-        xfail('linalg.cholesky'),
-        skip('msort'),
-        xfail('nn.functional.dropout'),
-        xfail('to_sparse'),
-        xfail('addcdiv'),
-        xfail('cholesky'),
-        xfail('cumulative_trapezoid'),
-        xfail('diag_embed'),
-        xfail('logit'),
-        xfail('trapezoid'),
-        xfail('trapz'),
-        xfail('corrcoef'),
-        xfail('cov'),
-        xfail('chalf'),  # RuntimeError: "sum_cpu" not implemented for 'ComplexHalf'
-        skip('nn.functional.binary_cross_entropy_with_logits'),  # seems to fail sometimes?
-        skip('nn.functional.margin_ranking_loss'),  # seems flaky
-        decorate('matmul', decorator=unittest.skipIf(IS_ARM64, 'flaky')),
-        decorate('__rmatmul__', decorator=unittest.skipIf(IS_ARM64, 'flaky')),
-    })
-    def test_aot_autograd_exhaustive(self, device, dtype, op):
-        def f(args, kwargs):
-            return op.op(*args, **kwargs)
-        if not op.supports_autograd:
-            return
-        sample_inputs_itr = op.sample_inputs(device, dtype, requires_grad=True)
-        for sample_input in sample_inputs_itr:
-            args = [sample_input.input] + list(sample_input.args)
-            kwargs = sample_input.kwargs
-            if not all([isinstance(i, torch.Tensor) and i.dtype == torch.float for i in args]):
-                self.skipTest("not all inputs are float tensors")
-            if not all([isinstance(i, torch.Tensor) and i.dtype == torch.float for i in kwargs.values()]):
-                self.skipTest("not all inputs are float tensors")
-                continue
-            t = f(args, kwargs)
-            if isinstance(t, tuple):
-                self.skipTest("output is a tuple")
-                continue
-
-            def reset_grads():
-                def f(x):
-                    x.grad = None
-                pytree.tree_map(f, args)
-
-            def get_grads(args):
-                return pytree.tree_map(lambda x: x.grad, args)
-
-            compiled_f = compiled_function(f, nop, nop)
-
-            reset_grads()
-            compiled_f(args, kwargs).sum().backward()
-            compiled_grad = get_grads(args)
-
-            reset_grads()
-            f(args, kwargs).sum().backward()
-            orig_grad = get_grads(args)
-            self.assertEqual(orig_grad, compiled_grad)
-
-            def create_new_arg(x):
-                return x.detach().uniform_(0, 1).requires_grad_(x.requires_grad)
-
-            args = pytree.tree_map(create_new_arg, args)
-
-            reset_grads()
-            compiled_f(args, kwargs).sum().backward()
-            compiled_grad = get_grads(args)
-
-            reset_grads()
-            f(args, kwargs).sum().backward()
-            orig_grad = get_grads(args)
-            self.assertEqual(orig_grad, compiled_grad)
-
-
 def extract_graph(fx_g, _, graph_cell):
     graph_cell[0] = fx_g
     return fx_g
@@ -746,6 +669,7 @@ aot_autograd_failures = {
     xfail('index_reduce'),
     xfail('istft'),
     xfail('linalg.eig'),
+    xfail('scatter_reduce.prod'),
 
     # non-deterministic
     xfail('as_strided_scatter'),
