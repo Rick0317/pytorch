@@ -115,6 +115,19 @@ def get_schema_info(func):
     return torch._C._SchemaInfo(func._schema)  # type: ignore[attr-defined]
 
 
+# many of the prims do not at the moment model aliasing or strides,
+# but as an incremenetal step, enable aten-aten decomp. these decomps
+# are used for aot autograd tracing so we would like to unify and add
+# additional testing to them
+@functools.lru_cache(None)
+def aten_to_aten_decomp(func):
+    from torch._decomp import decomposition_table
+
+    decompositions = torch._decomp.decompositions
+    decomp_attrs = [getattr(decompositions, attr) for attr in dir(decompositions)]
+    return decomposition_table[func] in decomp_attrs
+
+
 def tree_flatten_only(ty: Type[T], pytree: PyTree):
     flat_vals, _ = tree_flatten(pytree)
     return [elem for elem in flat_vals if isinstance(elem, ty)]
@@ -302,7 +315,8 @@ def non_kwarg_to(fake_mode, func, *args, **kwargs):
     input_device = new_kwargs["device"]
     out_device = input_device if input_device else new_kwargs["input"].device
     new_kwargs["device"] = torch.device("meta")
-    r = func(*args, **new_kwargs)
+    inp = new_kwargs.pop("input")
+    r = func(inp, **new_kwargs)
     return fake_mode.fake_tensor_converter(fake_mode, r, out_device)
 
 
@@ -366,7 +380,7 @@ def run_and_return_new_tensor_of_input_device(fake_mode, func, args, kwargs):
     )
 
     out_device = new_kwargs["input"].device
-    with in_kernel_invocation_manager(fake_mode):
+    with no_dispatch(), in_kernel_invocation_manager(fake_mode):
         out = func(*args, **kwargs)
 
     return FakeTensor(fake_mode, out, out_device)
@@ -392,7 +406,7 @@ def index_put(fake_mode, func, *args, **kwargs):
 # same with index_put, but return the input
 @register_op_impl(aten.index_put_.default)
 def index_put_(fake_mode, func, *args, **kwargs):
-    with in_kernel_invocation_manager(fake_mode):
+    with no_dispatch(), in_kernel_invocation_manager(fake_mode):
         out = func(*args, **kwargs)
 
     _, new_kwargs = normalize_function(
@@ -417,18 +431,17 @@ def nyi(fake_mode, func, *args, **kwargs):
 @contextlib.contextmanager
 def in_kernel_invocation_manager(fake_mode):
     # See: note [Fake Tensor Dispatch Keys]
+    prev_in_kernel = fake_mode.in_kernel_invocation
     meta_in_tls = torch._C._meta_in_tls_dispatch_include()
-    prev = fake_mode.in_kernel_invocation
+    assert meta_in_tls == prev_in_kernel, f"{meta_in_tls}, {prev_in_kernel}"
 
     fake_mode.in_kernel_invocation = True
-    if not meta_in_tls:
-        torch._C._add_meta_to_tls_dispatch_include()
+    torch._C._set_meta_in_tls_dispatch_include(True)
     try:
         yield
     finally:
-        fake_mode.in_kernel_invocation = prev
-        if not meta_in_tls:
-            torch._C._remove_meta_from_tls_dispatch_include()
+        fake_mode.in_kernel_invocation = prev_in_kernel
+        torch._C._set_meta_in_tls_dispatch_include(prev_in_kernel)
 
 
 class FakeTensor(torch.Tensor):
@@ -738,6 +751,8 @@ class FakeTensorMode(TorchDispatchMode):
         # is written to must be invalidated
         self.invalidate_written_to_constants(func, flat_arg_fake_tensors, args, kwargs)
 
+        from torch._decomp import _disabled_meta_decomps, decomposition_table
+
         # IDK: feels bad man, sym_numel on as_strided infinite loops otherwise
         if (
             has_symbolic_sizes
@@ -745,7 +760,6 @@ class FakeTensorMode(TorchDispatchMode):
         ):
             # TODO: Find better approach for this
             # Avoid circular import
-            from torch._decomp import decomposition_table
             from torch._meta_registrations import meta_table
 
             with no_dispatch():
@@ -768,6 +782,15 @@ class FakeTensorMode(TorchDispatchMode):
                 r = func.decompose(*args, **kwargs)
                 if r is not NotImplemented:
                     return r
+
+        # invoke aten-aten decomps
+        with self:
+            if (
+                func in decomposition_table
+                and aten_to_aten_decomp(func)
+                and func not in _disabled_meta_decomps
+            ):
+                return decomposition_table[func](*args, **kwargs)
 
         # prims already wrap FakeTensor inputs to FakeTensor outputs
         # and do device logic, we dont need do anything but run them
