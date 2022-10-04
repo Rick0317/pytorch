@@ -353,6 +353,59 @@ class TestAOTAutograd(AOTTestCase):
         inp = [torch.randn(5, requires_grad=True) for _ in range(3)]
         f(*inp).sum().backward()
 
+    def test_pre_autograd_decomps(self):
+
+        def fn(x):
+            return torch.nn.functional.interpolate(x, scale_factor=2., mode='bilinear') + 1
+
+        def assert_compiler(gm, args):
+            for node in gm.graph.nodes:
+                assert node.target is not torch.ops.aten.upsample_bilinear2d.vec
+                assert node.target is not torch.ops.aten.upsample_bilinear2d_backward.vec
+            return gm
+
+        target_op = torch.ops.aten.upsample_bilinear2d.vec
+        decomposition_table = torch._decomp.get_decompositions({target_op})
+        # Insert pre-autograd decomposition for upsample_bilinear2d
+        key = (target_op, torch._C.DispatchKey.Autograd)
+        decomposition_table[key] = decomposition_table[target_op]
+
+        compiled_f = aot_function(fn, assert_compiler, decompositions=decomposition_table)
+        inp = [torch.randn(4, 3, 10, 10, requires_grad=True)]
+
+        ref_out, ref_grad = _outs_and_grads(fn, inp)
+        test_out, test_grad = _outs_and_grads(compiled_f, inp)
+        self.assertEqual(ref_out, test_out)
+        self.assertEqual(ref_grad, test_grad)
+
+        # Rerun without pre-autograd decomposition
+        del decomposition_table[key]
+
+        def assert_forward_compiler(gm, args):
+            found_forward = False
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.aten.upsample_bilinear2d.vec:
+                    found_forward = True
+                    break
+            assert not found_forward
+            return gm
+
+        def assert_backward_compiler(gm, args):
+            found_backward = False
+            for node in gm.graph.nodes:
+                if node.target == torch.ops.aten.upsample_bilinear2d_backward.vec:
+                    found_backward = True
+                    break
+            assert found_backward
+            return gm
+
+        compiled_f = aot_function(fn,
+                                  fw_compiler=assert_forward_compiler,
+                                  bw_compiler=assert_backward_compiler,
+                                  decompositions=decomposition_table)
+        test_out, test_grad = _outs_and_grads(compiled_f, inp)
+
+
     def test_compilation_context(self):
         def f(x):
             return x.sin().sin()

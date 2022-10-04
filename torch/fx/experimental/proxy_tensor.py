@@ -568,11 +568,24 @@ def disable_autocast_cache():
         torch.set_autocast_cache_enabled(old_value)
 
 
-def make_fx(f, decomposition_table=None, tracing_mode="real"):
+OpOverload = torch._ops.OpOverload
+DispatchKey = torch._C.DispatchKey
+
+def make_fx(f,
+            decomposition_table: Optional[Dict[Union[OpOverload, Tuple[OpOverload, DispatchKey]], Callable]] = None,
+            tracing_mode="real"):
+    """
+    decomposition_table: The key of decomposition_table can be either an OpOverload or
+        a tuple of (OpOverload, DispatchKey). For the entries with tuple key, the decomposition function
+        will be dynamically registered as the python dispatch function for the op under the given DispatchKey.
+    """
+
     assert tracing_mode in ["real", "fake", "symbolic"]
 
     if decomposition_table is None:
         decomposition_table = {}
+
+    python_dispatch_table = {key: value for key, value in decomposition_table.items() if type(key) is tuple}
 
     @functools.wraps(f)
     def wrapped(*args):
@@ -589,8 +602,11 @@ def make_fx(f, decomposition_table=None, tracing_mode="real"):
             raise AssertionError(f"Unexpected tracing type: {tracing_mode}")
 
         python_dispatcher_mode: Any = nullcontext()
-        if tracing_mode == "symbolic":
+        current_python_dispatch: Any = nullcontext()
+
+        if tracing_mode == "symbolic" or python_dispatch_table:
             python_dispatcher_mode = enable_python_dispatcher()
+            current_python_dispatch = torch._ops.python_dispatch(python_dispatch_table)
 
         proxy_mode = ProxyTorchDispatchMode(fx_tracer)
 
@@ -625,7 +641,7 @@ def make_fx(f, decomposition_table=None, tracing_mode="real"):
 
         # We disable the autocast cache as the autocast cache causes type conversions on parameters to
         # check a cache, which introduces untracked tensors into the graph
-        with decompose(decomposition_table), fake_tensor_mode, python_dispatcher_mode, \
+        with decompose(decomposition_table), fake_tensor_mode, python_dispatcher_mode, current_python_dispatch, \
              sym_mode, proxy_mode, disable_autocast_cache():  # type: ignore[attr-defined]
             t = dispatch_trace(wrap_key(func, args, fx_tracer), tracer=fx_tracer, concrete_args=tuple(phs))
 

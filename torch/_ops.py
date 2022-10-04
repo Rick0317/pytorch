@@ -4,7 +4,8 @@ import inspect
 import sys
 import types
 from abc import ABC
-from typing import Any, Dict
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Tuple
 
 import torch._C
 
@@ -14,6 +15,21 @@ from torch import _utils_internal
 # Query `hasattr` only once.
 
 _SET_GLOBAL_FLAGS = hasattr(sys, "getdlopenflags") and hasattr(sys, "setdlopenflags")
+
+CURRENT_PYTHON_DISPATCH_TABLE: Dict[
+    Tuple["OpOverload", torch._C.DispatchKey], Callable
+] = {}
+
+
+@contextmanager
+def python_dispatch(python_dispatch_table):
+    global CURRENT_PYTHON_DISPATCH_TABLE
+    old_python_dispatch_table = CURRENT_PYTHON_DISPATCH_TABLE
+    CURRENT_PYTHON_DISPATCH_TABLE = python_dispatch_table
+    try:
+        yield CURRENT_PYTHON_DISPATCH_TABLE
+    finally:
+        CURRENT_PYTHON_DISPATCH_TABLE = old_python_dispatch_table
 
 
 @contextlib.contextmanager
@@ -336,6 +352,17 @@ class OpOverload(PyOperatorABC):
             return handler
 
         key = resolve_key(self, key)
+
+        # Pre-autograd decomposition needs to work with Autograd and other backend-specific Autograd keys,
+        # e.g. AutogradCPU, autogradXLA ...
+        # TODO: Using key.name to do string matching is a bit of a hack, but we haven't expose python API for this
+        if key.name.startswith("Autograd"):
+            # We skip caching the result in attr, as we want to support dynamic registration
+            r = CURRENT_PYTHON_DISPATCH_TABLE.get((self, key), None)
+            if not r:
+                r = self.py_kernels.get(key, key)
+            return r
+
         r = self.py_kernels.get(key, key)
         setattr(self, attr, r)
         return r

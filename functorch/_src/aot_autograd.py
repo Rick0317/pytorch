@@ -364,7 +364,13 @@ def aot_dispatch_autograd(flat_fn, flat_args: List[Tensor], aot_config: AOTConfi
         # Trace once without decompositions, into a graph of ATen ops.
         # NB: tracing_mode is real, as it's assumed the calling context setup
         # fake tensor mode / symbolic shapes if that is needed
-        fx_g = make_fx(joint_forward_backward)(*joint_inputs)
+
+        pre_autograd_decomps = {}
+        if aot_config.decompositions:
+            pre_autograd_decomps = {key: value for key, value in aot_config.decompositions.items() if type(key) is tuple}
+
+        # pre-autograd decomposition must be applied when tracing the joint_forward_backward
+        fx_g = make_fx(joint_forward_backward, pre_autograd_decomps)(*joint_inputs)
 
         def fake_fn(primals, tangents):
             with torch.fx.traceback.override_stack_trace():
