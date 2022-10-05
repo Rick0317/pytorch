@@ -4877,6 +4877,26 @@ class TestNLLLoss(TestCase):
         helper(10000)
         helper((10000, 40))
 
+    def test_multinomial(self):
+        # Test with num_dist = 1
+        def helper(probs, compare_mean, compare_var, num_samples=5, replacement=True):
+            cpu_prob_tensor = torch.tensor(probs, device='cpu', dtype=torch.float, requires_grad=False)
+            prob_tensor = cpu_prob_tensor.detach().clone().to('mps')
+
+            mps_out = torch.multinomial(prob_tensor, num_samples, replacement=replacement)
+            if(not replacement):
+                print(mps_out.to('cpu'))
+            else:
+                # Compare "real" with theoretical values
+                print(mps_out.to('cpu').float().mean(), compare_mean)
+                print(mps_out.to('cpu').float().std() ** 2, compare_var)
+
+        # TODO: Add tests for data types
+        helper(np.array([[0., 0., 0., 0.5, 0.5]]), (3 + 4) / 2, (12.5 - 3.5 ** 2), 100000)
+        helper(np.array([[.2, .2, .2, .2, .2]]), (0 + 1 + 2 + 3 + 4) / 5, (6 - 2 * 2), 10000)
+        helper(np.array([[1, 1, 1, 1, 1]]), (0 + 1 + 2 + 3 + 4) / 5, (6 - 2 * 2), 10000)
+        helper(np.array([1, 1, 1, 1, 1]), (0 + 1 + 2 + 3 + 4) / 5, (6 - 2 * 2), 10000)
+        helper(np.array([[1, 1, 1, 1, 1, 1, 1]]), 0, 0, 7, False)
 
 class TestNNMPS(NNTestCase):
 
@@ -7053,16 +7073,16 @@ class TestConsistency(TestCase):
         '__ror__': ['b8', 'i16', 'i32', 'i64', 'u8'],
         '__rpow__': ['f16'],
         '__rxor__': ['b8', 'i16', 'i32', 'i64', 'u8'],
-        'masked.argmax': ['i16', 'i64', 'u8'],
-        'masked.argmin': ['i16', 'i64', 'u8'],
-        'masked.log_softmax': ['f32'],
-        'masked.logaddexp': ['f32'],
-        'masked.norm': ['f16', 'f32'],
-        'masked.normalize': ['f16', 'f32'],
-        'masked.softmax': ['f32'],
-        'masked.softmin': ['f32'],
-        'masked.std': ['f32'],
-        'masked.var': ['f32'],
+        '_masked.argmax': ['i16', 'i64', 'u8'],
+        '_masked.argmin': ['i16', 'i64', 'u8'],
+        '_masked.log_softmax': ['f32'],
+        '_masked.logaddexp': ['f32'],
+        '_masked.norm': ['f16', 'f32'],
+        '_masked.normalize': ['f16', 'f32'],
+        '_masked.softmax': ['f32'],
+        '_masked.softmin': ['f32'],
+        '_masked.std': ['f32'],
+        '_masked.var': ['f32'],
         'abs': ['f16', 'f32', 'i16', 'i32', 'u8'],
         'acos': ['f32', 'i16', 'i32', 'u8'],
         'acosh': ['f32', 'i16', 'i32', 'u8'],
@@ -7290,7 +7310,8 @@ class TestConsistency(TestCase):
         'clamp_min': ['b8', 'f16', 'f32', 'i16', 'i32', 'i64', 'u8'],
         'logical_and': ['b8', 'f16', 'f32', 'i16', 'i32', 'i64', 'u8'],
         'logical_or': ['b8', 'f16', 'f32', 'i16', 'i32', 'i64', 'u8'],
-        'logical_xor': ['b8', 'f16', 'f32', 'i16', 'i32', 'i64', 'u8']}
+        'logical_xor': ['b8', 'f16', 'f32', 'i16', 'i32', 'i64', 'u8'],
+        'where': ['f16', 'f32', 'i16', 'i32', 'i64', 'u8']}
 
 
     ALLOWLIST_OP_GRAD = {
@@ -7298,12 +7319,12 @@ class TestConsistency(TestCase):
         '__rdiv__': ['f16', 'f32'],
         '__rmatmul__': ['f32'],
         '__rmul__': ['f16', 'f32'],
-        'masked.log_softmax': ['f32'],
-        'masked.logaddexp': ['f32'],
-        'masked.softmax': ['f32'],
-        'masked.softmin': ['f32'],
-        'masked.std': ['f32'],
-        'masked.var': ['f32'],
+        '_masked.log_softmax': ['f32'],
+        '_masked.logaddexp': ['f32'],
+        '_masked.softmax': ['f32'],
+        '_masked.softmin': ['f32'],
+        '_masked.std': ['f32'],
+        '_masked.var': ['f32'],
         'abs': ['f16', 'f32'],
         'acos': ['f32'],
         'acosh': ['f32'],
@@ -7469,9 +7490,9 @@ class TestConsistency(TestCase):
         # Functions that hang
         'masked_fill': [torch.bool, torch.uint8, torch.float32], 'where': [torch.bool],
         # + forward when requires_grad=True or running backward
-        'masked.mean': [torch.bool, torch.float16],
-        'masked.prod': [torch.bool],
-        'masked.sum': [torch.bool],
+        '_masked.mean': [torch.bool, torch.float16],
+        '_masked.prod': [torch.bool],
+        '_masked.sum': [torch.bool],
 
         # Functions that hard crash
         'nn.functional.kl_div': [torch.int16, torch.int32, torch.int64],
@@ -7483,8 +7504,8 @@ class TestConsistency(TestCase):
         'index_select': [torch.float16],
         'nn.functional.embedding': [torch.float32, torch.float16],
         '__rpow__': [torch.int64],
-        'masked.std': [torch.int32],
-        'masked.var': [torch.int32],
+        '_masked.std': [torch.int32],
+        '_masked.var': [torch.int32],
         'as_strided_scatter': [torch.uint8],
         'atan2': [torch.int64],
         'bfloat16': None,
