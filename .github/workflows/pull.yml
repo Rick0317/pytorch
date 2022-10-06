@@ -121,6 +121,7 @@ jobs:
           { config: "default", shard: 2, num_shards: 2, runner: "linux.2xlarge" },
           { config: "crossref", shard: 1, num_shards: 2, runner: "linux.2xlarge" },
           { config: "crossref", shard: 2, num_shards: 2, runner: "linux.2xlarge" },
+          { config: "deploy", shard: 1, num_shards: 2, runner: "linux.2xlarge" },
           { config: "dynamo", shard: 1, num_shards: 2, runner: "linux.2xlarge" },
           { config: "dynamo", shard: 2, num_shards: 2, runner: "linux.2xlarge" },
           { config: "functorch", shard: 1, num_shards: 1, runner: "linux.2xlarge" },
@@ -301,6 +302,26 @@ jobs:
       build-environment: linux-focal-py3.7-gcc7-mobile-lightweight-dispatch-build
       docker-image-name: pytorch-linux-focal-py3.7-gcc7
       build-generates-artifacts: false
+
+  deploy-linux-bionic-cuda11_6-py3_10-gcc7-build:
+    name: deploy-linux-bionic-cuda11_6-py3_10-gcc7-build
+    uses: ./.github/workflows/_linux-build.yml
+    with:
+      build-environment: linux-bionic-cuda11.6-py3.10-gcc7
+      docker-image-name: pytorch-linux-bionic-cuda11.6-cudnn8-py3-gcc7
+      test-matrix: |
+        { include: [
+          { config: "deploy", shard: 1, num_shards: 1, runner: "linux.4xlarge.nvidia.gpu" },
+        ]}
+
+  deploy-linux-bionic-cuda11_6-py3_10-gcc7-test:
+    name: pytorch-linux-jammy-cuda11_6-cudnn8-py3_8-clang12-deploy
+    uses: ./.github/workflows/_linux-test.yml
+    needs: deploy-linux-bionic-cuda11_6-py3_10-gcc7-build
+    with:
+      build-environment: deploy-linux-bionic-cuda11_6-py3_10-gcc7-build
+      docker-image: ${{ needs.deploy-linux-bionic-cuda11_6-py3_10-gcc7-build.outputs.docker-image }}
+      test-matrix: ${{ needs.deploy-linux-bionic-cuda11_6-py3_10-gcc7-build.outputs.test-matrix }}
 
   linux-focal-rocm5_2-py3_7-build:
     # don't run build twice on master
