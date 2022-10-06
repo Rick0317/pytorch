@@ -658,8 +658,8 @@ test_dynamo() {
 <<<<<<< HEAD
 =======
 test_deploy() {
-  pushd ../multipy
-  docker run --rm multipy bash multipy/runtime/build/test_deploy
+  pushd ../multipy/multipy/runtime/build
+  bash ./test_deploy
   popd
 }
 
