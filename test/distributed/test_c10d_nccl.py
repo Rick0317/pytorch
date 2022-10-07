@@ -2546,11 +2546,6 @@ class NcclErrorHandlingTest(MultiProcessTestCase):
             # been aborted by watchdog.
             self._wait_for_comm_abort(process_group, failed_collective_timeout)
 
-    @requires_nccl()
-    @skip_if_lt_x_gpu(2)
-    def test_nncl_rank_membership(self):
-        self._test_rank_membership(backend="nccl")
-
 
 class CommTest(test_c10d_common.AbstractCommTest, MultiProcessTestCase):
     @property
@@ -2810,6 +2805,11 @@ class CommTest(test_c10d_common.AbstractCommTest, MultiProcessTestCase):
     @with_dist_debug_levels(levels=["OFF"])
     def test_nccl_warn_not_in_group_debug_off(self):
         self._test_warn_not_in_group(backend="nccl")
+
+    @requires_nccl()
+    @skip_if_lt_x_gpu(2)
+    def test_nncl_rank_membership(self):
+        self._test_rank_membership(backend="nccl")
 
     @requires_nccl()
     @skip_if_lt_x_gpu(2)

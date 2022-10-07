@@ -5306,6 +5306,9 @@ def sample_inputs_prod(op_info, device, dtype, requires_grad, **kwargs):
     yield SampleInput(make_arg((3, 3, 3)), args=(1,))
     yield SampleInput(make_arg((3, 3, 3)), args=(1,), kwargs={'keepdim': True})
 
+    yield SampleInput(make_arg((3, 0)), args=(1,))
+    yield SampleInput(make_arg((3, 0)), args=(1,), kwargs={'keepdim': True})
+
     # test zero scalar tensor
     zero = make_arg(())
     zero.zero_()
@@ -9284,7 +9287,9 @@ op_db: List[OpInfo] = [
            skips=(
                # cumprod does not handle correctly out= dtypes
                DecorateInfo(unittest.expectedFailure, 'TestCommon', 'test_out'),
-               DecorateInfo(unittest.expectedFailure, 'TestCompositeCompliance', 'test_backward'),
+               # RuntimeError: "prod_cpu" not implemented for 'BFloat16'
+               DecorateInfo(unittest.expectedFailure, 'TestDecomp', 'test_comprehensive',
+                            dtypes=(torch.bfloat16,), device_type='cpu'),
            ),
            # gradgradcheck fails in fast_mode=True: #56275
            sample_inputs_func=sample_inputs_cumprod,
@@ -16075,10 +16080,6 @@ op_db: List[OpInfo] = [
         sample_inputs_func=sample_inputs_prod,
         ref=reference_reduction_numpy(np.prod),
         skips=(
-            # Pre-existing condition (calls .item); needs to be fixed
-            DecorateInfo(unittest.expectedFailure, 'TestCompositeCompliance', 'test_backward'),
-            # Pre-existing condition (calls .item); needs to be fixed
-            DecorateInfo(unittest.expectedFailure, 'TestCompositeCompliance', 'test_forward_ad'),
             # FIXME: prod does not support passing keepdim without passing dim
             DecorateInfo(unittest.skip("Skipped!"), 'TestReductions', 'test_dim_default_keepdim'),
             # FIXME: prod reduces all dimensions when dim=[]
@@ -16321,13 +16322,6 @@ op_db: List[OpInfo] = [
         supports_forward_ad=True,
         supports_fwgrad_bwgrad=True,
         skips=(
-            # https://github.com/pytorch/pytorch/issues/82235
-            DecorateInfo(
-                unittest.expectedFailure,
-                'TestSchemaCheckModeOpInfo',
-                'test_schema_correctness',
-                device_type='cuda',
-            ),
             DecorateInfo(
                 unittest.skip("Skipped!"),
                 "TestJit",
@@ -16367,6 +16361,13 @@ op_db: List[OpInfo] = [
         supports_forward_ad=True,
         supports_fwgrad_bwgrad=True,
         skips=(
+            # https://github.com/pytorch/pytorch/issues/82235
+            DecorateInfo(
+                unittest.expectedFailure,
+                'TestSchemaCheckModeOpInfo',
+                'test_schema_correctness',
+                device_type='cuda',
+            ),
             DecorateInfo(
                 unittest.skip("Skipped!"),
                 "TestJit",
@@ -18158,8 +18159,8 @@ sparse_reduction_ops = [op for op in op_db if isinstance(op, ReductionOpInfo) an
 shape_funcs = [op for op in op_db if isinstance(op, ShapeFuncInfo)]
 reduction_ops = [op for op in op_db if isinstance(op, ReductionOpInfo)]
 reference_filtered_ops = [op for op in reduction_ops if op.ref is not None]
-reference_masked_ops = [op for op in reference_filtered_ops if op.name.startswith('_masked.')]
-sparse_masked_reduction_ops = [op for op in sparse_reduction_ops if op.name.startswith('_masked.')]
+reference_masked_ops = [op for op in reference_filtered_ops if op.name.startswith('masked.')]
+sparse_masked_reduction_ops = [op for op in sparse_reduction_ops if op.name.startswith('masked.')]
 
 # TODO: review porting these to make_tensor
 def index_variable(shape, max_indices, device=torch.device('cpu')):
