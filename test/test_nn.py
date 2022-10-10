@@ -13357,6 +13357,7 @@ class TestNNDeviceType(NNTestCase):
             bias.requires_grad_(False)
         self.assertTrue(gradgradcheck(convolution, inputs, nondet_tol=gradcheck_nondet_tol))
 
+
     @onlyCPU
     def test_conv_contiguous_for_oneDNN(self):
         # See https://github.com/pytorch/pytorch/issues/80837.
@@ -13382,7 +13383,6 @@ class TestNNDeviceType(NNTestCase):
                 with torch.backends.mkldnn.flags(enabled=False):
                     y_ = conv(x2)
                     self.assertEqual(y, y_)
-
 
     @onlyCPU
     def test_conv_ic1_channels_last_for_oneDNN(self):
