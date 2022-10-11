@@ -85,6 +85,15 @@ function get_bazel() {
   chmod +x tools/bazel
 }
 
+function install_triton {
+  TRITON_VERSION=d3c925db8a81ca74f14680876b9311e7d079c5a1
+  pip_install -U "git+https://github.com/openai/triton@${TRITON_VERSION}#subdirectory=python"
+}
+
+function install_jinja2 {
+  pip_install jinja2
+}
+
 function install_monkeytype {
   # Install MonkeyType
   pip_install MonkeyType

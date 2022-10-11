@@ -940,7 +940,10 @@ if TEST_WITH_TORCHDYNAMO:
     torchdynamo.config.log_level = logging.ERROR
     # Do not spend time on helper functions that are called with different inputs
     torchdynamo.config.cache_size_limit = 8
-
+    if TEST_WITH_TORCHINDUCTOR:
+        import torchinductor.config
+        torchinductor.config.triton.autotune = False  # too slow
+        torchinductor.config.fallback_random = True  # fallback to reduce randomness
 
 def skipIfTorchDynamo(msg="test doesn't currently work with torchdynamo"):
     def decorator(fn):
@@ -960,7 +963,6 @@ def skipIfTorchDynamo(msg="test doesn't currently work with torchdynamo"):
 
         return fn
 
-
     return decorator
 
 def skipIfTorchInductor(msg="test doesn't currently work with torchinductor"):
@@ -968,14 +970,14 @@ def skipIfTorchInductor(msg="test doesn't currently work with torchinductor"):
         if not isinstance(fn, type):
             @wraps(fn)
             def wrapper(*args, **kwargs):
-                if TEST_WITH_TORCHINDUCTOR:
+                if TEST_WITH_TORCHDYNAMO or TEST_WITH_TORCHINDUCTOR:
                     raise unittest.SkipTest(msg)
                 else:
                     fn(*args, **kwargs)
             return wrapper
 
         assert(isinstance(fn, type))
-        if TEST_WITH_TORCHINDUCTOR:
+        if TEST_WITH_TORCHDYNAMO or TEST_WITH_TORCHINDUCTOR:
             fn.__unittest_skip__ = True
             fn.__unittest_skip_why__ = msg
 

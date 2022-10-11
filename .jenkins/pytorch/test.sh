@@ -109,6 +109,10 @@ if [[ "$TEST_CONFIG" == *dynamo* ]]; then
   export PYTORCH_TEST_WITH_DYNAMO=1
 fi
 
+if [[ "$TEST_CONFIG" == *inductor* ]]; then
+  export PYTORCH_TEST_WITH_INDUCTOR=1
+fi
+
 # TODO: this condition is never true, need to fix this.
 if [[ -n "$PR_NUMBER" ]] && [[ -z "$CI_MASTER" || "$CI_MASTER" == "false" ]]; then
   # skip expensive checks when on PR and CI_MASTER flag is not set
@@ -243,6 +247,14 @@ test_dynamo_shard() {
     --shard "$1" "$NUM_TEST_SHARDS" \
     --verbose
   assert_git_not_dirty
+}
+
+test_inductor() {
+  # TODO: enable inductor on core tests
+  # time python test/run_test.py --core --exclude test_autograd --continue-through-error --verbose
+  pushd ../torchdynamo
+  pytest test/inductor
+  popd
 }
 
 test_python_gloo_with_tls() {
@@ -651,7 +663,7 @@ test_vec256() {
 
 test_dynamo() {
   pushd ../torchdynamo
-  pytest test
+  pytest test/dynamo
   popd
 }
 
@@ -683,6 +695,14 @@ elif [[ "$TEST_CONFIG" == distributed ]]; then
   if [[ "${SHARD_NUMBER}" == 1 ]]; then
     test_rpc
   fi
+elif [[ "${TEST_CONFIG}" == *inductor* ]]; then
+  if [[ "$BUILD_ENVIRONMENT" == *cuda* ]]; then
+    install_triton
+  fi
+  install_jinja2
+  install_torchvision
+  checkout_install_torchdynamo
+  test_inductor
 elif [[ "${TEST_CONFIG}" == *dynamo* && "${SHARD_NUMBER}" == 1 && $NUM_TEST_SHARDS -gt 1 ]]; then
   test_without_numpy
   install_torchvision
