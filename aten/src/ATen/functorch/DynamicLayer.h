@@ -118,5 +118,11 @@ TORCH_API std::ostream& operator<<(std::ostream& os, const std::vector<DynamicLa
 TORCH_API void setInplaceRequiresGradAllowed(bool allowed);
 TORCH_API bool getInplaceRequiresGradAllowed();
 
+struct TORCH_API WithoutTop {
+  WithoutTop();
+  ~WithoutTop();
+  DynamicLayer layer_;
+};
+
 }
 } // namespace at

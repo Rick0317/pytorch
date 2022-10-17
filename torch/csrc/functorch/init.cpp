@@ -16,6 +16,7 @@
 #include <ATen/functorch/PlumbingHelper.h>
 #include <ATen/functorch/TensorWrapper.h>
 #include <c10/core/AutogradState.h>
+#include <ATen/functorch/Interpreter.h>
 
 // This file contains functorch's Python bindings.
 
@@ -461,6 +462,32 @@ void initFuncTorchBindings(PyObject* module) {
   m.def("is_functorch_wrapped_tensor", [](const Tensor& tensor) {
     return maybe_get_level(tensor) != -1;
   });
+  m.def("peek_interpreter_stack", []() -> c10::optional<Interpreter> {
+    const auto& stack = getDynamicLayerStack();
+    if (stack.size() == 0) {
+      return c10::nullopt;
+    }
+    return stack.back().interpreter();
+  });
+  py::class_<at::functorch::WithoutTop>(m, "WithoutTop")
+    .def(py::init<>());
+
+  py::enum_<TransformType>(m, "TransformType")
+    .value("Grad", TransformType::Grad)
+    .value("Vmap", TransformType::Vmap);
+  py::class_<Interpreter>(m, "CInterpreter")
+    .def("key", &Interpreter::key)
+    .def("level", &Interpreter::level);
+  py::class_<GradInterpreterPtr>(m, "CGradInterpreterPtr")
+    .def(py::init<const Interpreter*>())
+    .def("key", &GradInterpreterPtr::key)
+    .def("level", &GradInterpreterPtr::level)
+    .def("prevGradMode", &GradInterpreterPtr::prevGradMode);
+  py::class_<VmapInterpreterPtr>(m, "CVmapInterpreterPtr")
+    .def(py::init<const Interpreter*>())
+    .def("key", &VmapInterpreterPtr::key)
+    .def("level", &VmapInterpreterPtr::level)
+    .def("batchSize", &VmapInterpreterPtr::batchSize);
 }
 
 } // namespace impl

@@ -10,6 +10,7 @@ import torch._C
 
 import torch.jit
 from torch import _utils_internal
+from ._pyfunctorch import dispatch_functorch
 
 # Query `hasattr` only once.
 
@@ -114,6 +115,7 @@ class PyOperator(PyOperatorABC):
         self._name = name
         self.table = {}
         self.python_key_mode_table = {}
+        self.functorch_table = {}
 
         # Make _OPNamespace not scream, this whole name based association needs a good hard look
         self.__name__ = name
@@ -121,6 +123,12 @@ class PyOperator(PyOperatorABC):
 
     def fallthrough(self, dispatch_key):
         self.table[dispatch_key] = self._fallthrough_fn(self, dispatch_key)
+
+    def py_functorch_impl(self, transform):
+        def inner(fn):
+            self.functorch_table[transform] = fn
+            return fn
+        return inner
 
     def py_impl(self, dispatch_key_or_mode):
         def inner(fn):
@@ -147,6 +155,9 @@ class PyOperator(PyOperatorABC):
     def dispatch(self, dispatch_key, *args, **kwargs):
         from torch.utils._python_dispatch import _get_current_dispatch_mode
 
+        if dispatch_key == torch._C.DispatchKey.FuncTorchDynamicLayerFrontMode:
+            return dispatch_functorch(self, args, kwargs)
+
         if dispatch_key == torch._C.DispatchKey.Python:
             # TODO(voz): We should walk all the nodes here / turn it into a list, topmode is ok for now.
             curr_mode = type(_get_current_dispatch_mode())
@@ -159,7 +170,7 @@ class PyOperator(PyOperatorABC):
             # TODO(voz): The idea behind this is that we do not yet support dispatch by key + mode, only key.
             return self.python_key_mode_table[curr_mode](*args, **kwargs)
 
-        assert dispatch_key in self.table
+        assert dispatch_key in self.table, dispatch_key
         return self.table[dispatch_key](*args, **kwargs)
 
     def __call__(self, *args, **kwargs):
