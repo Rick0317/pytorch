@@ -137,6 +137,44 @@ function install_triton() {
   fi
 }
 
+function setup_torchdeploy_deps(){
+  conda install -y cmake
+  conda install -y -c conda-forge libpython-static=3.10
+  sudo wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo gpg --dearmor -o /usr/share/keyrings/magic-key.gpg && \
+  sudo echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/magic-key.gpg] https://apt.kitware.com/ubuntu/ bionic main" | sudo tee -a /etc/apt/sources.list && \
+  sudo echo "deb http://security.ubuntu.com/ubuntu focal-security main" | sudo tee -a /etc/apt/sources.list && \
+  sudo apt update && \
+  sudo apt install -y binutils && \
+  sudo rm -rf /var/lib/apt/lists/*
+  local CC="$(which gcc)"
+  local CXX="$(which g++)"
+  export CC
+  export CXX
+  pip install --upgrade pip
+}
+
+function checkout_install_torchdeploy() {
+  local commit
+  setup_torchdeploy_deps
+  pushd ..
+  git clone https://github.com/pytorch/multipy
+  pushd multipy
+  # with ABI flag change
+  python multipy/runtime/example/generate_examples.py
+  git submodule update --init --recursive
+  pip install -e . --install-option="--abicxx"
+  popd
+  popd
+}
+
+function test_torch_deploy(){
+ pushd ..
+ pushd multipy
+ ./multipy/runtime/build/test_deploy
+ popd
+ popd
+}
+
 function test_functorch() {
   python test/run_test.py --functorch --verbose
 }
