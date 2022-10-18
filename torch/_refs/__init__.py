@@ -3206,23 +3206,27 @@ def index_fill(
 def index_fill_(
     x: TensorLike, dim: int, index: TensorLike, value: Union[NumberType, TensorLike]
 ):
+    utils.check(
+        index.ndim <= 1,
+        lambda: f"Index should have dimension 1 or 0 (got {index.ndim})",
+    )
     if isinstance(value, TensorLike):
         utils.check(
             value.ndim == 0,
             lambda: "Only supports 0-dimensional value tensor. "  # type: ignore[union-attr]
             f"Got a tensor with {value.ndim} dimensions.",
         )  # type: ignore[arg-type]
-        return x.clone().index_copy_(dim, index, value)
-    dim = utils.canonicalize_dims(x.ndim, dim)
-    utils.check(
-        index.ndim <= 1,
-        lambda: f"Index should have dimension 1 or 0 (got {index.ndim})",
-    )
-    idx = (slice(None),) * dim + (index,)
-    # Treat scalars as elements of \R^1
-    y = x.unsqueeze(0) if x.ndim == 0 else x
-    y[idx] = value  # type: ignore[assignment]
-    return x
+    else:
+        value = torch.scalar_tensor(
+            value, dtype=x.dtype, layout=x.layout, device=x.device  # type: ignore[arg-type]
+        )
+
+    # index_copy does not broadcast on value so we have to do it manually
+    shape = list(x.shape)
+    if x.ndim > 0:
+        shape[dim] = index.numel()
+    value = value.expand(shape)
+    return x.index_copy_(dim, index, value)
 
 
 @register_decomposition(torch.ops.aten.index_add)
@@ -3248,10 +3252,8 @@ def index_select(x: TensorLike, dim: int, index: TensorLike):
     )
     # Treat scalars as elements of \R^1
     if x.ndim == 0:
-        # we cannot write `x.unsqueeze(0)[index].squeeze(0).clone()`
-        # as tensor[index] will trigger index.item() if index is a 0-dim tensor
-        # and .item() cannot be symbolically traced with FakeTensor.
-        return torch.ops.aten.index(x.unsqueeze(0), [index]).squeeze(0).clone()
+        return x.unsqueeze(0)[index].squeeze(0).clone()
+
     idx = (slice(None),) * dim + (index,)
     return x[idx]
 
@@ -4344,10 +4346,9 @@ def randn(
     device: Optional[torch.device] = None,
     layout: Optional[torch.layout] = None,
     requires_grad: bool = False,
-    pin_memory: Optional[bool] = None,
+    pin_memory: bool = False,
 ) -> TensorLikeType:
-
-    check(pin_memory is None, lambda: "pin_memory parameter is not supported!")
+    utils.check_pin_memory(pin_memory)
 
     shape_ = utils.extract_shape_from_varargs(shape)
 
@@ -4407,9 +4408,7 @@ def uniform(
     return prims.uniform(shape, low=low, high=high, dtype=dtype, device=device)
 
 
-@register_decomposition(
-    [torch.ops.aten.masked_fill.Scalar, torch.ops.aten.masked_fill.Tensor]
-)
+@register_decomposition(torch.ops.aten.masked_fill)
 def masked_fill(a: TensorLikeType, mask: TensorLikeType, value: TensorOrNumberLikeType):
     python_type = utils.dtype_to_type(a.dtype)
     if isinstance(value, Number):
