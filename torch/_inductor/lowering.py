@@ -909,6 +909,14 @@ def register_onednn_fusion_ops():
                 )
             )
 
+        @register_lowering(torch.ops.mkldnn._linear_pointwise)
+        def linear_unary(
+            x: TensorBox, w: TensorBox, b: TensorBox, attr, scalars, algorithm
+        ):
+            return TensorBox.create(
+                ir.LinearUnary.create(x, w, b, attr, scalars, algorithm)
+            )
+
     else:
         log.warning(
             "Register OneDNN fusion ops is failed which OneDNN is not enabled at build step"

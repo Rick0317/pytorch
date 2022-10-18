@@ -183,6 +183,34 @@ class ConvBinary2d(nn.Conv2d):
         return self._conv_forward(input, other, self.weight, self.bias)
 
 
+class LinearUnary(nn.Linear):
+    def __init__(
+        self,
+        linear: nn.Module,
+        unary: nn.Module,
+    ):
+        super(LinearUnary, self).__init__(
+            linear.in_features,
+            linear.out_features,
+            linear.bias is not None,
+            linear.weight.device,
+            linear.weight.dtype,
+        )
+        self._update_module_params(linear, unary)
+
+    def _update_module_params(self, linear, unary):
+        self.__dict__ = copy.deepcopy(linear.__dict__)
+        self.attr, self.scalars, self.algorithm = unary_modules_map[unary.__class__](
+            unary
+        )
+
+    def forward(self, input):
+        y = torch.ops.mkldnn._linear_pointwise(
+            input, self.weight, self.bias, self.attr, self.scalars, self.algorithm
+        )
+        return y
+
+
 def fuse_conv_unary_eval(conv: nn.Module, unary: nn.Module):
     assert not (conv.training), "Fusion only for eval!"
     return ConvUnary2d(
@@ -196,6 +224,26 @@ def fuse_conv_binary_eval(conv: nn.Module, binary_op_name: str):
     return ConvBinary2d(
         conv,
         binary_op_name,
+    )
+
+
+def is_bfloat16_module(m):
+    weight_is_bf16 = m.weight.dtype == torch.bfloat16
+    bias_is_bf16 = m.bias is None or m.bias.dtype == torch.bfloat16
+    return weight_is_bf16 and bias_is_bf16
+
+
+def bf16_only_node(m):
+    if type(m) in [nn.Linear]:
+        return True
+    else:
+        return False
+
+
+def fuse_linear_unary_eval(linear: nn.Module, unary: nn.Module):
+    return LinearUnary(
+        linear,
+        unary,
     )
 
 
@@ -257,13 +305,20 @@ def fuse_unary(gm: torch.fx.GraphModule):
                     len(node.args[0].users) > 1
                 ):  # Output of convolution is used by other nodes
                     continue
-                conv = modules[node.args[0].target]
+                computation_node = modules[node.args[0].target]
                 unary = modules[node.target]
-                eval_mode = all(not n.training for n in [conv, unary])
+                eval_mode = all(not n.training for n in [computation_node, unary])
                 if not eval_mode:
                     continue
-                fused_conv = fuse_func(conv, unary)
-                replace_node_module(node.args[0], modules, fused_conv)
+
+                # only fuse for linear when the dtype is bf16
+                if bf16_only_node(computation_node) and not is_bfloat16_module(
+                    computation_node
+                ):
+                    continue
+                fused_module = fuse_func(computation_node, unary)
+                replace_node_module(node.args[0], modules, fused_module)
+
                 node.replace_all_uses_with(node.args[0])
                 gm.graph.erase_node(node)
                 gm.graph.lint()
@@ -459,7 +514,10 @@ def rand_like(x, **kwargs):
 replacements = {torch.nn.functional.dropout: lowmem_dropout, torch.rand_like: rand_like}
 
 
-computation_modules_map = {nn.Conv2d: fuse_conv_unary_eval}
+computation_modules_map = {
+    nn.Conv2d: fuse_conv_unary_eval,
+    nn.Linear: fuse_linear_unary_eval,
+}
 
 
 unary_modules_map = {
