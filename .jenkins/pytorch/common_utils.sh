@@ -138,6 +138,9 @@ function install_triton() {
 }
 
 function setup_torchdeploy_deps(){
+  python setup.py bdist_wheel
+  pip uninstall -y torchvision torchaudio
+  pip install --force-reinstall dist/*.whl
   conda install -y cmake
   conda install -y -c conda-forge libpython-static=3.10
   sudo wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo gpg --dearmor -o /usr/share/keyrings/magic-key.gpg && \
