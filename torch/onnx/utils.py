@@ -72,6 +72,7 @@ def is_in_onnx_export() -> bool:
 # TODO(justinchuby): Remove dependency to this global variable from constant_fold.cpp
 # Skip check due to cannot import IValue from torch._C
 _params_dict = {}  # type: ignore[var-annotated]
+_custom_onnxscript = list()  # type: ignore[var-annotated]
 
 
 @contextlib.contextmanager
@@ -1597,6 +1598,7 @@ def _export(
                     model_file_location,
                     node_attr_to_name,
                 )
+            proto = _add_onnxscript_fn(proto)
             if verbose:
                 torch.onnx.log("Exported graph: ", graph)
             if export_type == _exporter_states.ExportTypes.PROTOBUF_FILE:
@@ -1658,6 +1660,20 @@ def _export(
         _reset_trace_module_map()
 
     return torch_out
+
+
+@_beartype.beartype
+def _add_onnxscript_fn(model_proto: bytes) -> bytes:
+    # avoid onnx to be dependency
+    try:
+        import onnx
+    except Exception:
+        raise errors.OnnxExporterError("Module onnx is not installed!")
+    model = onnx.load_model_from_string(model_proto)
+    if _custom_onnxscript is not None:
+        model.functions.extend(_custom_onnxscript)
+    model_proto = model.SerializeToString()
+    return model_proto
 
 
 @_beartype.beartype
@@ -1940,7 +1956,10 @@ def _verify_custom_op_name(symbolic_name: str):
 
 @_beartype.beartype
 def register_custom_op_symbolic(
-    symbolic_name: str, symbolic_fn: Callable, opset_version: int
+    symbolic_name: str,
+    symbolic_fn: Callable,
+    opset_version: int,
+    onnxscript_fn: Optional[Callable] = None,
 ):
     """Registers a symbolic function for a custom operator.
 
@@ -1963,6 +1982,9 @@ def register_custom_op_symbolic(
         symbolic_name = f"aten{symbolic_name}"
 
     _verify_custom_op_name(symbolic_name)
+    if onnxscript_fn is not None:
+        local_func = onnxscript_fn.to_function_proto()  # type: ignore[attr-defined]
+        _custom_onnxscript.append(local_func)
 
     registration.custom_onnx_symbolic(
         symbolic_name,
