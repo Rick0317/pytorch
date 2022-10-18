@@ -3,7 +3,7 @@ import itertools
 import logging
 import operator
 from collections.abc import Iterable
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import sympy
 
@@ -1919,7 +1919,7 @@ def scatter_reduce_(self, dim: int, index, src, reduce, *, include_self: bool = 
 
 
 @register_lowering(aten.upsample_nearest2d)
-def upsample_nearest2d(x, output_size=None, scale_factors=None):
+def upsample_nearest2d(x, output_size, scales_h=None, scales_w=None):
     x.realize_hint()  # elements are reused
     x_loader = x.make_loader()
 
@@ -1927,16 +1927,10 @@ def upsample_nearest2d(x, output_size=None, scale_factors=None):
     ih = V.graph.sizevars.guard_static_shape(ih)
     iw = V.graph.sizevars.guard_static_shape(iw)
 
-    if scale_factors:
-        assert not output_size
-        sh, sw = scale_factors
-        oh = int(ih * sh)
-        ow = int(iw * sw)
-    else:
-        oh, ow = output_size
+    oh, ow = output_size
 
-    scale_h = ih / oh
-    scale_w = iw / ow
+    scale_h = 1 / scales_h if scales_h else ih / oh
+    scale_w = 1 / scales_w if scales_w else iw / ow
 
     def scale(x, scale):
         x = ops.index_expr(x, torch.float32)
@@ -2069,26 +2063,6 @@ def upsample_bicubic2d_default(
         inner_fn=fn,
         ranges=[N, C, sympy.Integer(oH), sympy.Integer(oW)],
     )
-
-
-@register_lowering(aten.upsample_bicubic2d.vec)
-def upsample_bicubic2d_vec(
-    a,
-    output_size,
-    align_corners: bool,
-    scale_factors: Optional[Tuple[float, float]] = None,
-):
-    _, _, iH, iW = a.get_size()
-    iH = V.graph.sizevars.guard_static_shape(iH)
-    iW = V.graph.sizevars.guard_static_shape(iW)
-
-    if bool(output_size) + bool(scale_factors) != 1:
-        raise RuntimeError("Must specify exactly one of output_size and scale_factor.")
-    if output_size is None:
-        assert scale_factors is not None
-        output_size = (int(iH * scale_factors[0]), int(iW * scale_factors[1]))
-    scale_h, scale_w = scale_factors if scale_factors else (None, None)
-    return upsample_bicubic2d_default(a, output_size, align_corners, scale_h, scale_w)
 
 
 @register_lowering(aten.reflection_pad2d)
@@ -2608,9 +2582,9 @@ def _adaptive_avg_pool2d(x, output_size):
     return rv
 
 
-@register_lowering(aten.upsample_nearest2d_backward.vec)
+@register_lowering(aten.upsample_nearest2d_backward.default)
 def upsample_nearest2d_backward(
-    x, output_size=None, input_size=None, scale_factors=None
+    x, output_size=None, input_size=None, scales_h=None, scales_w=None
 ):
     x.realize_hint()
 
