@@ -109,6 +109,10 @@ if [[ "$TEST_CONFIG" == *dynamo* ]]; then
   export PYTORCH_TEST_WITH_DYNAMO=1
 fi
 
+if [[ "$TEST_CONFIG" == *inductor* ]]; then
+  export PYTORCH_TEST_WITH_INDUCTOR=1
+fi
+
 # TODO: this condition is never true, need to fix this.
 if [[ -n "$PR_NUMBER" ]] && [[ -z "$CI_MASTER" || "$CI_MASTER" == "false" ]]; then
   # skip expensive checks when on PR and CI_MASTER flag is not set
@@ -247,6 +251,37 @@ test_dynamo_shard() {
     --shard "$1" "$NUM_TEST_SHARDS" \
     --verbose
   assert_git_not_dirty
+}
+
+
+test_inductor() {
+  # TODO: enable inductor on core tests
+  # time python test/run_test.py --core --exclude test_autograd --continue-through-error --verbose
+
+  # PYTORCH_TEST_WITH_DYNAMO and PYTORCH_TEST_WITH_INDUCTOR are only needed for PyTorch tests not written with
+  # using dynamo/inductor. For dynamo/inductor unit tests, specifiying them will trigger an error like
+  # "Detected two calls to `torchdynamo.optimize(...)` with a different backend compiler arguments."
+  PYTORCH_TEST_WITH_DYNAMO=0 PYTORCH_TEST_WITH_INDUCTOR=0 pytest test/inductor
+}
+
+test_inductor_huggingface_shard() {
+  if [[ -z "$NUM_TEST_SHARDS" ]]; then
+    echo "NUM_TEST_SHARDS must be defined to run a Python test shard"
+    exit 1
+  fi
+  python benchmarks/dynamo/huggingface.py --ci --training --accuracy -d cuda --inductor --float32 \
+    --total-partitions 2 --partition-id "$1" --output=inductor_huggingface_"$1".csv
+  python benchmarks/dynamo/check_csv.py -f inductor_huggingface_"$1".csv
+}
+
+test_inductor_timm_shard() {
+  if [[ -z "$NUM_TEST_SHARDS" ]]; then
+    echo "NUM_TEST_SHARDS must be defined to run a Python test shard"
+    exit 1
+  fi
+  python benchmarks/dynamo/timm_models.py --ci --training --accuracy -d cuda --inductor --float32 \
+    --total-partitions 3 --partition-id "$1" --output=inductor_timm_"$1".csv
+  python benchmarks/dynamo/check_csv.py -f inductor_timm_"$1".csv
 }
 
 test_python_gloo_with_tls() {
@@ -696,6 +731,41 @@ elif [[ "${TEST_CONFIG}" == *dynamo* && "${SHARD_NUMBER}" == 2 && $NUM_TEST_SHAR
   install_filelock
   install_triton
   test_dynamo_shard 2
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 1 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  test_inductor
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 2 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  install_huggingface
+  test_inductor_huggingface_shard 0
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 3 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  install_huggingface
+  test_inductor_huggingface_shard 1
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 4 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  install_timm
+  test_inductor_timm_shard 0
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 5 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  install_timm
+  test_inductor_timm_shard 1
+elif [[ "${TEST_CONFIG}" == *inductor* && "${SHARD_NUMBER}" == 6 && $NUM_TEST_SHARDS -gt 1 ]]; then
+  install_torchvision
+  install_filelock
+  install_triton
+  install_timm
+  test_inductor_timm_shard 2
 elif [[ "${SHARD_NUMBER}" == 1 && $NUM_TEST_SHARDS -gt 1 ]]; then
   test_without_numpy
   install_torchvision
